@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="132dp">
+    <LinearLayout
+        android:layout_gravity="center"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content">
+        <ImageView
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:src="@drawable/ic_widget_nap_error_icon"/>
+        <LinearLayout
+            android:gravity="center_vertical"
+            android:layout_gravity="center_vertical"
+            android:id="@+id/refresh_group"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginStart="18dp">
+            <TextView
+                android:textSize="10sp"
+                android:textStyle="normal"
+                android:textColor="#73ffffff"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="暂无数据"
+                android:maxLines="1"/>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

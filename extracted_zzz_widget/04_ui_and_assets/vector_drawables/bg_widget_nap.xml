@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <solid android:color="#121212"/>
+            <corners android:radius="22dp"/>
+        </shape>
+    </item>
+    <item
+        android:left="3dp"
+        android:top="3dp"
+        android:right="3dp"
+        android:bottom="3dp">
+        <shape>
+            <solid android:color="#262626"/>
+            <corners android:radius="19dp"/>
+        </shape>
+    </item>
+    <item android:drawable="@drawable/nap_bg_pattern"/>
+</layer-list>

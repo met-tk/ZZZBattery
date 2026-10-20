@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 绝区零小组件官方配色定义 (提取自米游社 colors.xml) -->
+    <color name="widget_nap_bg">#313131</color>
+    <color name="widget_nap_content">#a6a6a6</color>
+    <color name="widget_nap_desc">#a5a5a5</color>
+    <color name="widget_nap_energy_title">#a6a6a6</color>
+    <color name="widget_nap_error_text">#cbcbcb</color>
+    <color name="widget_nap_highlight">#ffea00</color>
+    <color name="widget_nap_item_unlock">#cbcbcb</color>
+    <color name="widget_nap_line">#26a5a5a5</color>
+    <color name="widget_nap_recover_ok_text">#ffea00</color>
+    <color name="widget_nap_recover_title">#a6a6a6</color>
+    <color name="widget_nap_right_tag">#cbcbcb</color>
+    <color name="widget_nap_title">#a5a5a5</color>
+</resources>

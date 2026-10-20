@@ -1,0 +1,25 @@
+<Window x:Class="ZzzBattery.Windows.QrLoginWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="米游社扫码连接" Style="{StaticResource {x:Type Window}}"
+ Width="460" Height="600" MinWidth="360" MinHeight="380"
+ WindowStartupLocation="CenterOwner" ResizeMode="CanMinimize">
+ <ScrollViewer Style="{StaticResource WidgetScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+  <StackPanel Margin="28">
+   <TextBlock Text="扫码连接完整小组件" FontSize="23" FontWeight="SemiBold"/>
+   <TextBlock Text="使用本人手机上的米游社 App 扫一扫，并在手机上确认登录。连接后可同步咖啡、日常和活动信息。" TextWrapping="Wrap" Foreground="{DynamicResource Muted}" Margin="0,10,0,18"/>
+   <Border Background="White" CornerRadius="14" Padding="12" HorizontalAlignment="Center">
+    <Grid Width="250" Height="250">
+     <Image x:Name="QrImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="米游社官方登录二维码"/>
+     <TextBlock x:Name="QrPlaceholder" Text="正在生成二维码…" Foreground="#333333" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Grid>
+   </Border>
+   <TextBlock x:Name="LoginStatus" Text="正在连接官方登录服务…" TextWrapping="Wrap" TextAlignment="Center" Margin="0,18,0,8" MinHeight="42"/>
+   <TextBlock Text="登录由米哈游官方接口处理；二维码在本机生成，凭据在选择角色后加密保存。" TextWrapping="Wrap" Foreground="{DynamicResource Muted}" FontSize="12" Margin="0,0,0,16"/>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+    <Button x:Name="RefreshButton" Content="重新生成二维码" Click="RefreshClick" Margin="0,0,10,0"/>
+    <Button Content="取消" Click="CancelClick"/>
+   </StackPanel>
+  </StackPanel>
+ </ScrollViewer>
+</Window>

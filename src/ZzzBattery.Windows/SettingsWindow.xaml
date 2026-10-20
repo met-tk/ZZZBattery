@@ -1,0 +1,192 @@
+<Window x:Class="ZzzBattery.Windows.SettingsWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="设置 — 绝区零桌面电量" Style="{StaticResource {x:Type Window}}"
+ Width="560" Height="680" MinWidth="440" MinHeight="360" ResizeMode="CanResize"
+ WindowStartupLocation="CenterScreen" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+ <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries>
+  <ResourceDictionary Source="SettingsStyles.xaml"/>
+ </ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid Margin="26,22,26,16">
+   <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <StackPanel>
+    <TextBlock Text="小组件设置" FontSize="25" FontWeight="SemiBold"/>
+    <TextBlock Text="让电量小组件，更适合你的桌面。" Style="{StaticResource SettingsDescription}"/>
+   </StackPanel>
+   <Border Grid.Column="1" Background="{DynamicResource Panel}" CornerRadius="8" Padding="10,5" VerticalAlignment="Top" Margin="12,6,0,0">
+    <TextBlock x:Name="VersionText" FontSize="11" Foreground="{DynamicResource Muted}"/>
+   </Border>
+  </Grid>
+  <Border Grid.Row="1" Margin="26,0,26,16" Background="{DynamicResource Panel}" CornerRadius="11" Padding="4">
+   <UniformGrid Columns="4">
+    <RadioButton x:Name="AppearanceTab" Content="外观" Tag="Appearance" GroupName="SettingsPages" Style="{StaticResource SettingsTab}" Checked="SectionChanged"/>
+    <RadioButton x:Name="DesktopTab" Content="桌面" Tag="Desktop" GroupName="SettingsPages" Style="{StaticResource SettingsTab}" Checked="SectionChanged"/>
+    <RadioButton x:Name="ReminderTab" Content="提醒" Tag="Reminders" GroupName="SettingsPages" Style="{StaticResource SettingsTab}" Checked="SectionChanged"/>
+    <RadioButton x:Name="AccountTab" Content="账号" Tag="Account" GroupName="SettingsPages" Style="{StaticResource SettingsTab}" Checked="SectionChanged"/>
+   </UniformGrid>
+  </Border>
+  <ScrollViewer x:Name="PageScroll" Grid.Row="2" Style="{StaticResource WidgetScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="26,0,26,16" Margin="0,0,6,0">
+   <Grid>
+    <StackPanel x:Name="AppearancePage">
+     <TextBlock Text="显示方式" Style="{StaticResource SettingsCaption}"/>
+     <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
+      <RadioButton x:Name="CharacterMode" GroupName="DisplayModes" Style="{StaticResource SettingsMode}" Checked="ModeChanged" AutomationProperties.Name="角色卡片">
+       <StackPanel>
+        <Grid Width="40" Height="29" Margin="0,0,0,10">
+         <Border CornerRadius="5" BorderBrush="{DynamicResource Muted}" BorderThickness="1.5"/>
+         <Path Data="M 6 20 L 14 10 L 22 19 L 27 14 L 34 22" Stroke="{DynamicResource Muted}" StrokeThickness="1.5"/>
+         <Ellipse Width="5" Height="5" Fill="{DynamicResource AccentText}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,7,0"/>
+        </Grid>
+        <TextBlock Text="角色卡片" HorizontalAlignment="Center"/>
+       </StackPanel>
+      </RadioButton>
+      <RadioButton x:Name="ClassicMode" Grid.Column="2" GroupName="DisplayModes" Style="{StaticResource SettingsMode}" Checked="ModeChanged" AutomationProperties.Name="简洁面板">
+       <StackPanel>
+        <Grid Width="40" Height="29" Margin="0,0,0,10">
+         <Border CornerRadius="5" BorderBrush="{DynamicResource Muted}" BorderThickness="1.5"/>
+         <Border Height="4" Width="21" Background="{DynamicResource AccentText}" CornerRadius="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,7,0,0"/>
+         <Path Data="M 6 17 L 33 17 M 6 22 L 24 22" Stroke="{DynamicResource Muted}" StrokeThickness="1.5"/>
+        </Grid>
+        <TextBlock Text="简洁面板" HorizontalAlignment="Center"/>
+       </StackPanel>
+      </RadioButton>
+      <RadioButton x:Name="MiniMode" Grid.Column="4" GroupName="DisplayModes" Style="{StaticResource SettingsMode}" Checked="ModeChanged" AutomationProperties.Name="迷你电量条">
+       <StackPanel>
+        <Grid Width="40" Height="29" Margin="0,0,0,10">
+         <Border Height="15" CornerRadius="5" BorderBrush="{DynamicResource Muted}" BorderThickness="1.5"/>
+         <Border Width="22" Height="5" CornerRadius="2" Background="{DynamicResource AccentText}" HorizontalAlignment="Left" Margin="5,0,0,0"/>
+        </Grid>
+        <TextBlock Text="迷你电量条" HorizontalAlignment="Center"/>
+       </StackPanel>
+      </RadioButton>
+     </Grid>
+     <TextBlock Text="角色壁纸" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Padding="16" Margin="0,0,0,18">
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <StackPanel Margin="0,0,16,0" VerticalAlignment="Center">
+        <TextBlock x:Name="WallpaperName" TextWrapping="Wrap" FontWeight="SemiBold"/>
+        <TextBlock Text="应用于角色卡片" Style="{StaticResource SettingsDescription}"/>
+       </StackPanel>
+       <Button Grid.Column="1" Content="更换壁纸" Click="WallpapersClick" VerticalAlignment="Center"/>
+      </Grid>
+     </Border>
+     <TextBlock Text="界面配色" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Padding="16">
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <StackPanel>
+        <TextBlock Text="主题" Margin="0,0,0,9"/>
+        <ComboBox x:Name="ThemeBox" SelectedValuePath="Tag" Style="{StaticResource SettingsCombo}" SelectionChanged="Changed" AutomationProperties.Name="主题">
+         <ComboBoxItem Tag="Dark" Content="炭黑"/><ComboBoxItem Tag="Light" Content="浅灰"/><ComboBoxItem Tag="System" Content="跟随系统"/>
+        </ComboBox>
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,9"><TextBlock Text="强调色"/><Ellipse Width="9" Height="9" Fill="{DynamicResource Accent}" Margin="8,0,0,0"/></StackPanel>
+        <ComboBox x:Name="AccentBox" SelectedValuePath="Tag" Style="{StaticResource SettingsCombo}" SelectionChanged="Changed" AutomationProperties.Name="强调色">
+         <ComboBoxItem Tag="Lime" Content="酸橙绿"/>
+         <ComboBoxItem Tag="Yellow" Content="原版亮黄"/>
+        </ComboBox>
+       </StackPanel>
+      </Grid>
+     </Border>
+    </StackPanel>
+    <StackPanel x:Name="DesktopPage" Visibility="Collapsed">
+     <TextBlock Text="窗口行为" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Margin="0,0,0,18">
+      <StackPanel>
+       <CheckBox x:Name="TopmostBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" AutomationProperties.Name="始终置顶">
+        <StackPanel><TextBlock Text="始终置顶"/><TextBlock Text="显示在其他窗口上方" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <CheckBox x:Name="LockedBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" AutomationProperties.Name="锁定窗口位置">
+        <StackPanel><TextBlock Text="锁定窗口位置"/><TextBlock Text="防止拖动时误移小组件" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <CheckBox x:Name="ThroughBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" AutomationProperties.Name="鼠标穿透" ToolTip="鼠标可操作小组件下方的窗口。右键托盘电池图标可解除穿透；重启后自动解除。">
+        <StackPanel><TextBlock Text="鼠标穿透"/><TextBlock Text="可从托盘解除；重启后自动解除" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+      </StackPanel>
+     </Border>
+
+     <TextBlock Text="启动" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}">
+      <StackPanel>
+       <CheckBox x:Name="StartupBox" Style="{StaticResource SettingsToggle}" Checked="StartupChanged" Unchecked="StartupChanged" AutomationProperties.Name="开机自动启动">
+        <StackPanel><TextBlock Text="开机自动启动"/><TextBlock Text="登录 Windows 后启动小组件" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <Grid Margin="14">
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel Margin="0,0,16,0" VerticalAlignment="Center"><TextBlock Text="游戏 / 启动器"/><TextBlock x:Name="GamePathText" Style="{StaticResource SettingsDescription}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/></StackPanel>
+        <Button Grid.Column="1" Content="选择路径" Click="ChooseGameClick" VerticalAlignment="Center"/>
+       </Grid>
+      </StackPanel>
+     </Border>
+    </StackPanel>
+    <StackPanel x:Name="RemindersPage" Visibility="Collapsed">
+     <TextBlock Text="电量提醒" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Margin="0,0,0,18">
+      <StackPanel>
+       <CheckBox x:Name="ReminderBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" AutomationProperties.Name="电量回满提醒">
+        <StackPanel><TextBlock Text="电量回满提醒"/><TextBlock Text="回满前与回满时，通过系统托盘通知你" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <Grid Margin="14">
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+        <StackPanel Margin="0,0,16,0" VerticalAlignment="Center"><TextBlock Text="提前提醒"/><TextBlock Text="每轮恢复各提醒一次" Style="{StaticResource SettingsDescription}"/></StackPanel>
+        <ComboBox x:Name="MinutesBox" Grid.Column="1" VerticalAlignment="Center" SelectedValuePath="Tag" Style="{StaticResource SettingsCombo}" SelectionChanged="Changed" IsEnabled="{Binding IsChecked, ElementName=ReminderBox}" AutomationProperties.Name="提前提醒时间">
+         <ComboBoxItem Tag="5" Content="5 分钟"/><ComboBoxItem Tag="15" Content="15 分钟"/><ComboBoxItem Tag="30" Content="30 分钟"/><ComboBoxItem Tag="60" Content="60 分钟"/>
+        </ComboBox>
+       </Grid>
+      </StackPanel>
+     </Border>
+     <TextBlock Text="同步与提醒说明" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Padding="16">
+      <StackPanel>
+       <TextBlock Text="自动同步 · 每 25～30 分钟" FontWeight="SemiBold"/>
+       <TextBlock Text="也可在小组件中手动刷新。电量在本地估算，任务状态仅在同步成功后更新。" Style="{StaticResource SettingsDescription}"/>
+       <Border Style="{StaticResource SettingsDivider}" Margin="0,15"/>
+       <TextBlock Text="数据可靠时才发送提醒" FontWeight="SemiBold"/>
+       <TextBlock Text="断网、登录过期或数据过旧时暂停提醒，恢复同步后继续。" Style="{StaticResource SettingsDescription}"/>
+      </StackPanel>
+     </Border>
+    </StackPanel>
+    <StackPanel x:Name="AccountPage" Visibility="Collapsed">
+     <TextBlock Text="米游社账号" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Padding="20" Margin="0,0,0,18">
+      <StackPanel>
+       <Grid Margin="0,0,0,18">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+        <Border Background="{DynamicResource Surface}" Width="44" Height="44" CornerRadius="12" Margin="0,0,14,0">
+         <TextBlock Text="&#xE77B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="22" Foreground="{DynamicResource AccentText}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+        </Border>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+         <TextBlock x:Name="AccountHeading" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+         <TextBlock x:Name="AccountText" Style="{StaticResource SettingsDescription}"/>
+        </StackPanel>
+       </Grid>
+       <Button x:Name="ConnectButton" Content="连接米游社" Click="ConnectClick" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" MinWidth="124"/>
+      </StackPanel>
+     </Border>
+     <Border Style="{StaticResource SettingsCard}" Padding="16" Margin="0,0,0,18">
+      <StackPanel><TextBlock Text="账号保存在本机" FontWeight="SemiBold"/><TextBlock Text="登录凭据使用当前 Windows 用户加密保存。退出登录会清除本机凭据及电量缓存。" Style="{StaticResource SettingsDescription}"/></StackPanel>
+     </Border>
+     <Button x:Name="SignOutButton" Content="退出登录" Click="SignOutClick" HorizontalAlignment="Left" Background="Transparent"/>
+    </StackPanel>
+   </Grid>
+  </ScrollViewer>
+  <Border Grid.Row="3" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Padding="26,14">
+   <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <TextBlock x:Name="Status" Text="修改后自动保存" TextWrapping="Wrap" Foreground="{DynamicResource Muted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,16,0" AutomationProperties.LiveSetting="Polite"/>
+    <Button x:Name="DoneButton" Grid.Column="1" Content="完成" Click="DoneClick" Style="{StaticResource PrimaryButton}" MinWidth="84"/>
+   </Grid>
+  </Border>
+ </Grid>
+</Window>
+
+

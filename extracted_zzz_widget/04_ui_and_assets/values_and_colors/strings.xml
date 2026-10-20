@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 绝区零小组件文本定义 (提取自米游社 strings.xml) -->
+    <string name="widget_nap_name">绝区零战绩</string>
+    <string name="widget_nap_description">查看游戏内电量恢复、录像店经营等实时状态</string>
+    <string name="widget_nap_avatar_name">绝区零活动日历</string>
+    <string name="widget_nap_avatar_description">查看录像店经营及活动信息</string>
+</resources>

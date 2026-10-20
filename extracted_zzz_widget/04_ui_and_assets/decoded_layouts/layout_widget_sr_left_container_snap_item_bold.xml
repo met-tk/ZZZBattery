@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:textSize="10sp"
+    android:textStyle="bold"
+    android:textColor="@color/widget_sr_light"
+    android:ellipsize="end"
+    android:gravity="center"
+    android:id="@+id/tv_snap_title"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:maxLines="1"/>

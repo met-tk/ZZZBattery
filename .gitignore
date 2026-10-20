@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+.packages/
+artifacts/
+dist/
+*.user
+credentials.json
+*.dpapi
+WebViewProfile/
+user-data/
+tools/
+
