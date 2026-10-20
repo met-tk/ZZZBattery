@@ -12,7 +12,7 @@ public interface IMiyousheClient
     Task<EnergySnapshot> GetNoteAsync(Credential credential, GameRole role, CancellationToken cancellation = default);
 }
 
-public sealed partial class MiyousheClient(HttpClient http, string deviceId, bool includeWidget = false) : IMiyousheClient
+public sealed partial class MiyousheClient(HttpClient http, string deviceId, bool includeWidget = false) : IMiyousheClient, IDailySignClient
 {
     public const string NoteEndpoint = "https://api-takumi-record.mihoyo.com/event/game_record_zzz/api/zzz/note";
     public const string RolesEndpoint = "https://api-takumi.mihoyo.com/binding/api/getUserGameRolesByCookie";
@@ -96,6 +96,8 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
             if (code is null) throw new ApiFailure(FailureKind.Protocol, "服务器返回了无法识别的数据。");
             if (code != 0)
             {
+                if (endpoint == DailySignInfoEndpoint || endpoint == DailySignSubmitEndpoint)
+                    throw DailySignFailure(code.Value);
                 var failure = FromRetcode(code.Value);
                 failure.VerificationPath = endpoint == WidgetEndpoint ? "/api/zzz/widget" : "/api/zzz/note";
                 if (response.Headers.TryGetValues("x-trace-id", out var traces))
@@ -164,7 +166,8 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
                 var at = DateTimeOffset.UtcNow;
                 return ParseNote(data, credential.AccountKey, role.Key, at) with
                 {
-                    Notes = NoteParser.Parse(data, at, "官方小组件"), Source = "官方小组件"
+                    Notes = NoteParser.Parse(data, at, "官方小组件"), Source = "官方小组件",
+                    CommunitySigned = NoteParser.Bool(data, "has_signed")
                 };
             }
             catch (ApiFailure error) when (error.Code == -90001)
@@ -238,7 +241,7 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
                 if (index < 0) merged.Add(note);
                 else if (merged[index].State == NoteState.Unknown && note.State != NoteState.Unknown) merged[index] = note;
             }
-            return snapshot with { Notes = merged, SupplementMessage = "" };
+            return snapshot with { Notes = merged, SupplementMessage = "", CommunitySigned = NoteParser.Bool(data, "has_signed") };
         }
         catch (ApiFailure error)
         {

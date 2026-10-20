@@ -21,7 +21,7 @@ public partial class QrLoginWindow : Window
     internal QrLoginWindow(bool preview)
     {
         InitializeComponent();
-        MaxHeight = Math.Max(380, SystemParameters.WorkArea.Height - 40);
+        AdaptiveWindow.Attach(this, 320, 340);
         Loaded += async (_, _) =>
         {
             if (preview)

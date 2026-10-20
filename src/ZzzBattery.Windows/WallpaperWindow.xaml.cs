@@ -25,19 +25,44 @@ public partial class WallpaperWindow : Window
     private bool _ready;
     private bool _filtering;
     private int _previewVersion;
+    private bool _compact, _previewOnly;
+    public static readonly DependencyProperty GalleryColumnsProperty = DependencyProperty.Register(
+        nameof(GalleryColumns), typeof(int), typeof(WallpaperWindow), new PropertyMetadata(3));
+    public int GalleryColumns { get => (int)GetValue(GalleryColumnsProperty); private set => SetValue(GalleryColumnsProperty, value); }
     public int VisibleCount => WallpaperList.Items.Count;
 
-    public WallpaperWindow()
+    public WallpaperWindow(bool loadCatalog = true)
     {
         InitializeComponent();
-        Width = Math.Min(980, SystemParameters.WorkArea.Width - 40);
-        Height = Math.Min(790, SystemParameters.WorkArea.Height - 40);
+        AdaptiveWindow.Attach(this, 400, 420);
         PreviewCard.ShowPreview();
         _ready = true;
         SetCatalog(_service.Catalog.Current);
-        Loaded += async (_, _) => await RefreshCatalog(false);
+        if (loadCatalog) Loaded += async (_, _) => await RefreshCatalog(false);
         Closed += (_, _) => { _closed.Cancel(); _previewVersion++; };
         KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
+    }
+
+    private void GalleryLayoutSized(object sender, SizeChangedEventArgs e) => AdaptGallery();
+    private void PreviewToggleClick(object sender, RoutedEventArgs e) { _previewOnly = !_previewOnly; AdaptGallery(); }
+    private void AdaptGallery()
+    {
+        if (GalleryLayout is null || PreviewPane is null || PreviewToggle is null) return;
+        var compact = GalleryLayout.ActualWidth < 820;
+        if (compact != _compact)
+        {
+            _compact = compact;
+            FilterExpander.IsExpanded = !compact;
+        }
+        var preview = compact && _previewOnly;
+        PreviewToggle.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+        PreviewToggle.Content = preview ? "返回壁纸列表" : "查看预览";
+        PreviewColumn.Width = compact ? new GridLength(0) : new GridLength(344);
+        Grid.SetColumn(PreviewPane, compact ? 0 : 1);
+        PreviewPane.Visibility = !compact || preview ? Visibility.Visible : Visibility.Collapsed;
+        GalleryPane.Visibility = preview ? Visibility.Collapsed : Visibility.Visible;
+        var galleryWidth = GalleryLayout.ActualWidth - (compact ? 0 : 344);
+        GalleryColumns = Math.Clamp((int)((galleryWidth - 32) / 140), 2, 6);
     }
 
     private void SetCatalog(WallpaperCatalogResult result)

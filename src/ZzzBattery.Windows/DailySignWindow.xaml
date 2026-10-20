@@ -1,0 +1,55 @@
+<Window x:Class="ZzzBattery.Windows.DailySignWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="每日签到 — 绝区零桌面电量" Style="{StaticResource {x:Type Window}}"
+ Width="480" Height="680" MinWidth="360" MinHeight="420"
+ WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
+ Icon="Assets/battery.ico">
+ <Grid Margin="24">
+  <Grid.RowDefinitions>
+   <RowDefinition Height="Auto"/>
+   <RowDefinition Height="*"/>
+   <RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+  <StackPanel Margin="0,0,0,18">
+   <TextBlock Text="绝区零每日签到" FontSize="24" FontWeight="SemiBold"/>
+   <TextBlock Text="在米游社完成，再回来同步状态" Foreground="{DynamicResource Muted}" Margin="0,7,0,0"/>
+  </StackPanel>
+  <ScrollViewer Grid.Row="1" Style="{StaticResource WidgetScrollViewer}"
+   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+   <StackPanel Margin="0,0,6,0">
+    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource Stroke}"
+     BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,0,0,18">
+     <StackPanel>
+      <TextBlock x:Name="StatusHeading" Text="在官方页面继续" Foreground="{DynamicResource AccentText}" FontWeight="SemiBold"/>
+      <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,6,0,0" AutomationProperties.LiveSetting="Polite"/>
+     </StackPanel>
+    </Border>
+    <Border Background="White" CornerRadius="14" Padding="12" HorizontalAlignment="Center">
+     <Image x:Name="QrImage" Width="200" Height="200" Stretch="Uniform"
+      RenderOptions.BitmapScalingMode="NearestNeighbor" AutomationProperties.Name="绝区零官方签到页面二维码"/>
+    </Border>
+    <TextBlock Text="用米游社 App 扫码打开签到页" TextAlignment="Center" FontWeight="SemiBold" Margin="0,12,0,5"/>
+    <TextBlock Text="也可从 App 内进入「绝区零 → 签到福利」。请使用与小组件相同的账号和角色。" TextWrapping="Wrap"
+     Foreground="{DynamicResource Muted}" TextAlignment="Center" Margin="8,0,8,16"/>
+    <Border BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+     <StackPanel>
+      <TextBlock Text="按页面实际提示完成签到；如出现验证，请在官方页面完成。" TextWrapping="Wrap"/>
+      <TextBlock Text="电脑浏览器可能仅显示前往 App 的入口。此二维码只包含公开页面地址。" TextWrapping="Wrap"
+       FontSize="12" Foreground="{DynamicResource Muted}" Margin="0,6,0,0"/>
+     </StackPanel>
+    </Border>
+   </StackPanel>
+  </ScrollViewer>
+  <Grid Grid.Row="2" Margin="0,18,0,0">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Button x:Name="CheckButton" Content="已完成，检查签到状态" Click="CheckClick"
+    Style="{StaticResource PrimaryButton}" MinHeight="40"/>
+   <Grid Grid.Row="1" Margin="0,9,0,0">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Button x:Name="BrowserButton" Content="系统浏览器打开" Click="BrowserClick" HorizontalAlignment="Left"/>
+    <Button Grid.Column="1" Content="关闭" Click="CloseClick" MinWidth="70" IsCancel="True"/>
+   </Grid>
+  </Grid>
+ </Grid>
+</Window>

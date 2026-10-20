@@ -47,8 +47,7 @@ public partial class VerificationWindow : Window
         InitializeComponent();
         _popups = new OfficialPopupHost(this, text => { if (!_closed) Status.Text = text; });
         PageViewport.SizeChanged += (_, _) => FitBrowserViewport();
-        Width = Math.Min(620, SystemParameters.WorkArea.Width - 40);
-        Height = Math.Min(680, SystemParameters.WorkArea.Height - 40);
+        AdaptiveWindow.Attach(this, 420, 440);
         if (loadPage) Loaded += async (_, _) => await InitializeAndLoad();
         App.Current.Session.Changed += SessionChanged;
         Closed += (_, _) =>

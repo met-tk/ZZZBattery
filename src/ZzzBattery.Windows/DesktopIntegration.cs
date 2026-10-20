@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -11,10 +12,32 @@ namespace ZzzBattery.Windows;
 internal static class DesktopIntegration
 {
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] private struct MonitorInfo { public int Size; public Rect Monitor, Work; public uint Flags; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfo
+    {
+        public int Size; public Rect Monitor, Work; public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DisplayDevice
+    {
+        public int Size;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Id;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Key;
+    }
+    private delegate bool MonitorCallback(IntPtr monitor, IntPtr hdc, ref Rect bounds, IntPtr data);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
-    [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+    [DllImport("user32.dll")] private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorCallback callback, IntPtr data);
+    [DllImport("user32.dll", EntryPoint = "EnumDisplayDevicesW", CharSet = CharSet.Unicode)] private static extern bool EnumDisplayDevices(string device, uint index, ref DisplayDevice info, uint flags);
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
+    [DllImport("shcore.dll")] private static extern int GetScaleFactorForMonitor(IntPtr monitor, out int scale);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
@@ -29,21 +52,66 @@ internal static class DesktopIntegration
     }
     public static void KeepVisible(Window window, bool snap = false)
     {
+        if (GetWindowBounds(window) is not { } bounds || MonitorFor(window) is not { } monitor) return;
+        var placed = WindowPlacementMath.Clamp(bounds, monitor.WorkArea, snap);
+        MoveWindow(window, placed.X, placed.Y);
+    }
+    public static bool IsKeyboardMonitorMove(Window window)
+    {
         var hwnd = new WindowInteropHelper(window).Handle;
-        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return;
-        var monitor = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-        if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref monitor)) return;
-        var width = rect.Right - rect.Left; var height = rect.Bottom - rect.Top;
-        var x = Math.Clamp(rect.Left, monitor.Work.Left, Math.Max(monitor.Work.Left, monitor.Work.Right - width));
-        var y = Math.Clamp(rect.Top, monitor.Work.Top, Math.Max(monitor.Work.Top, monitor.Work.Bottom - height));
-        if (snap)
+        static bool Down(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
+        return hwnd != IntPtr.Zero && GetForegroundWindow() == hwnd &&
+            (Down(0x5B) || Down(0x5C)) && Down(0x10) && (Down(0x25) || Down(0x27));
+    }
+    public static DesktopRect? GetWindowBounds(Window window)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        return hwnd != IntPtr.Zero && GetWindowRect(hwnd, out var rect)
+            ? new(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top) : null;
+    }
+    public static bool MoveWindow(Window window, double x, double y)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero || !double.IsFinite(x) || !double.IsFinite(y) || Math.Abs(x) > 10_000_000 || Math.Abs(y) > 10_000_000) return false;
+        var left = (int)Math.Round(x); var top = (int)Math.Round(y);
+        if (GetWindowRect(hwnd, out var rect) && rect.Left == left && rect.Top == top) return true;
+        return SetWindowPos(hwnd, IntPtr.Zero, left, top, 0, 0, 0x0015); // no size, z-order or activation change
+    }
+    public static IReadOnlyList<DesktopMonitor> GetMonitors(Window? window = null)
+    {
+        var monitors = new List<DesktopMonitor>();
+        var hwnd = window is null ? IntPtr.Zero : new WindowInteropHelper(window).Handle;
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr handle, IntPtr hdc, ref Rect rect, IntPtr data) =>
         {
-            if (Math.Abs(x - monitor.Work.Left) <= 16) x = monitor.Work.Left;
-            if (Math.Abs(x + width - monitor.Work.Right) <= 16) x = monitor.Work.Right - width;
-            if (Math.Abs(y - monitor.Work.Top) <= 16) y = monitor.Work.Top;
-            if (Math.Abs(y + height - monitor.Work.Bottom) <= 16) y = monitor.Work.Bottom - height;
+            if (ReadMonitor(handle, hwnd) is { } monitor) monitors.Add(monitor);
+            return true;
+        }, IntPtr.Zero);
+        return monitors;
+    }
+    public static DesktopMonitor? MonitorFor(Window window)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        return hwnd == IntPtr.Zero ? null : ReadMonitor(MonitorFromWindow(hwnd, 2), hwnd);
+    }
+    private static DesktopMonitor? ReadMonitor(IntPtr handle, IntPtr hwnd)
+    {
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(handle, ref info)) return null;
+        var work = info.Work;
+        if (work.Right <= work.Left || work.Bottom <= work.Top) return null;
+        var id = "";
+        for (uint index = 0; index < 16; index++)
+        {
+            var device = new DisplayDevice { Size = Marshal.SizeOf<DisplayDevice>() };
+            if (!EnumDisplayDevices(info.Device, index, ref device, 1)) break;
+            if ((device.Flags & 1) != 0 && !string.IsNullOrEmpty(device.Id)) { id = device.Id; break; }
         }
-        if (x != rect.Left || y != rect.Top) SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, 0x0015);
+        GetScaleFactorForMonitor(handle, out var percent);
+        var scale = percent is >= 25 and <= 1600 ? percent / 100d : 1;
+        // The active window's effective DPI also covers custom scaling values.
+        if (hwnd != IntPtr.Zero && MonitorFromWindow(hwnd, 2) == handle && GetDpiForWindow(hwnd) is var dpi && dpi > 0)
+            scale = dpi / 96d;
+        return new(id, info.Device, new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), scale, (info.Flags & 1) != 0);
     }
     public static void Startup(bool enabled)
     {
@@ -51,9 +119,18 @@ internal static class DesktopIntegration
         if (enabled)
         {
             var executable = Environment.ProcessPath ?? throw new IOException("找不到程序路径。");
-            key.SetValue("ZZZBattery", "\"" + executable + "\"");
+            key.SetValue("ZZZBattery", "\"" + executable + "\" --autostart");
         }
         else key.DeleteValue("ZZZBattery", false);
+    }
+    public static void RefreshExistingStartupPath()
+    {
+        // An upgrade may move the executable to a new release directory. Only
+        // update an existing entry; never re-enable an entry removed by the user.
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+        if (key?.GetValue("ZZZBattery") is not string || Environment.ProcessPath is not { } executable) return;
+        var command = "\"" + executable + "\" --autostart";
+        if (!string.Equals(key.GetValue("ZZZBattery") as string, command, StringComparison.OrdinalIgnoreCase)) key.SetValue("ZZZBattery", command);
     }
 }
 

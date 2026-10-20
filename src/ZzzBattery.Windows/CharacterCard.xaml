@@ -15,8 +15,15 @@
      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="PillBorder" Property="Background" Value="#CC302931"/></Trigger>
      <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="PillBorder" Property="BorderBrush" Value="White"/><Setter TargetName="PillBorder" Property="BorderThickness" Value="1"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="PillBorder" Property="Opacity" Value=".45"/></Trigger>
+     <MultiTrigger>
+      <MultiTrigger.Conditions><Condition Property="IsEnabled" Value="False"/><Condition Property="Content" Value="已签到"/></MultiTrigger.Conditions>
+      <Setter TargetName="PillBorder" Property="Opacity" Value="1"/>
+     </MultiTrigger>
     </ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="HeaderPill" TargetType="Button" BasedOn="{StaticResource Pill}">
+   <Setter Property="FontSize" Value="10.5"/><Setter Property="Padding" Value="7,3"/>
   </Style>
  </UserControl.Resources>
  <Grid x:Name="CardRoot" Background="#ee73a4">
@@ -24,12 +31,14 @@
   <Image Source="Assets/Widget/bg_nap_avatar_mini_widget_card_letter.png" Width="360" Height="107" Margin="0,62,0,0" VerticalAlignment="Top" Stretch="Fill"/>
   <Image x:Name="Artwork" Width="360" Height="480" VerticalAlignment="Top" Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality"/>
   <Rectangle x:Name="BottomWash" Height="150" VerticalAlignment="Bottom"/>
-  <Grid Margin="18,16,18,0" Height="24" VerticalAlignment="Top">
-   <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-   <Button Content="启动游戏 ❯" Style="{StaticResource Pill}" HorizontalAlignment="Left" Click="LaunchClick" ToolTip="启动绝区零；首次使用可选择游戏程序"/>
-   <Button x:Name="RefreshButton" Grid.Column="1" Content="刷新 ⟳" Style="{StaticResource Pill}" Click="RefreshClick" Margin="0,0,6,0"/>
-   <Button Grid.Column="2" Content="前往社区 ❯" Style="{StaticResource Pill}" Click="CommunityClick" Margin="0,0,6,0"/>
-   <Button Grid.Column="3" Content="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Style="{StaticResource Pill}" Padding="6,3" Click="WallpaperClick" ToolTip="选择壁纸" AutomationProperties.Name="选择壁纸"/>
+  <Grid Margin="14,16,14,0" Height="24" VerticalAlignment="Top">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <Button Content="启动游戏 ❯" Width="68" Style="{StaticResource HeaderPill}" Click="LaunchClick" ToolTip="启动绝区零；首次使用可选择游戏程序"/>
+   <Button x:Name="DailySignButton" Grid.Column="1" Content="今日签到" Width="64" Style="{StaticResource HeaderPill}" Click="SignClick" Margin="6,0,0,0"
+    ToolTip="为当前登录账号的绝区零角色进行每日签到" ToolTipService.ShowOnDisabled="True" AutomationProperties.Name="今日签到"/>
+   <Button x:Name="RefreshButton" Grid.Column="3" Content="刷新 ⟳" Width="50" Style="{StaticResource HeaderPill}" Click="RefreshClick" Margin="0,0,6,0"/>
+   <Button Grid.Column="4" Content="前往社区 ❯" Width="72" Style="{StaticResource HeaderPill}" Click="CommunityClick" Margin="0,0,6,0"/>
+   <Button Grid.Column="5" Content="&#xE713;" Width="24" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Style="{StaticResource HeaderPill}" Padding="6,3" Click="WallpaperClick" ToolTip="选择壁纸" AutomationProperties.Name="选择壁纸"/>
   </Grid>
   <!-- A single rounded surface owns the whole panel, including the lower corners. -->
   <Border x:Name="DataSurface" Margin="8,0,8,8" Height="220" VerticalAlignment="Bottom" Background="#ED171B1B" CornerRadius="21" Padding="12,9,12,7">

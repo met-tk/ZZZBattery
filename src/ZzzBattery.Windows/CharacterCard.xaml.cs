@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using ZzzBattery.Core;
@@ -12,6 +13,7 @@ public partial class CharacterCard : UserControl
 {
     public event EventHandler? LaunchRequested;
     public event EventHandler? RefreshRequested;
+    public event EventHandler? DailySignRequested;
     public event EventHandler? CommunityRequested;
     public event EventHandler? WallpaperRequested;
     public event EventHandler? DetailsRequested;
@@ -19,6 +21,14 @@ public partial class CharacterCard : UserControl
     private int _page;
     private long _hintMinute;
     public CharacterCard() { InitializeComponent(); }
+    public void SetDailySign(string text, bool enabled, string tooltip)
+    {
+        DailySignButton.Content = text;
+        DailySignButton.IsEnabled = enabled && text != "已签到";
+        DailySignButton.ToolTip = tooltip;
+        AutomationProperties.SetName(DailySignButton, text);
+        AutomationProperties.SetHelpText(DailySignButton, tooltip);
+    }
     public void SetTheme(WidgetWallpaper wallpaper, ImageSource? image)
     {
         var color = (Color)ColorConverter.ConvertFromString(wallpaper.Color);
@@ -86,6 +96,7 @@ public partial class CharacterCard : UserControl
     private void DetailsClick(object sender, RoutedEventArgs e) => DetailsRequested?.Invoke(this, EventArgs.Empty);
     private void LaunchClick(object sender, RoutedEventArgs e) => LaunchRequested?.Invoke(this, EventArgs.Empty);
     private void RefreshClick(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke(this, EventArgs.Empty);
+    private void SignClick(object sender, RoutedEventArgs e) => DailySignRequested?.Invoke(this, EventArgs.Empty);
     private void CommunityClick(object sender, RoutedEventArgs e) => CommunityRequested?.Invoke(this, EventArgs.Empty);
     private void WallpaperClick(object sender, RoutedEventArgs e) => WallpaperRequested?.Invoke(this, EventArgs.Empty);
 }

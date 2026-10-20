@@ -33,10 +33,10 @@ internal sealed class OfficialPopupHost(Window owner, Action<string> report)
             popup = new Window
             {
                 Title = "米游社官方登录", Owner = owner,
-                Width = Math.Min(1000, SystemParameters.WorkArea.Width - 40),
-                Height = Math.Min(760, SystemParameters.WorkArea.Height - 40),
+                Width = 1000, Height = 760,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = panel
             };
+            AdaptiveWindow.Attach(popup, 320, 300);
             var closed = false;
             var active = popup;
             _windows.Add(active);

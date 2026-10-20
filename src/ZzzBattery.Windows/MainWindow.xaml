@@ -5,7 +5,7 @@
  Title="绝区零桌面电量" Style="{StaticResource {x:Type Window}}" Width="360" SizeToContent="Height"
  WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
  Background="Transparent" ShowInTaskbar="False" ShowActivated="False">
- <ScrollViewer x:Name="WidgetScroll" Style="{StaticResource WidgetScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><Grid>
+ <ScrollViewer x:Name="WidgetScroll" Style="{StaticResource WidgetScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><Viewbox Stretch="Uniform" StretchDirection="DownOnly"><Grid x:Name="WidgetContent" Width="376">
  <StackPanel x:Name="CharacterShell" Margin="8" Visibility="Collapsed">
   <Viewbox Stretch="Uniform" StretchDirection="DownOnly"><local:CharacterCard x:Name="Character" MouseLeftButtonDown="DragWindow"/></Viewbox>
   <Border Background="#EE191B1C" CornerRadius="10" Margin="0,6,0,0" Padding="10,4">
@@ -46,7 +46,10 @@
     <Grid Margin="0,18,0,0">
      <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="66"/></Grid.ColumnDefinitions>
      <StackPanel>
-      <TextBlock x:Name="EnergyLabel" Text="当前电量" Foreground="{DynamicResource Muted}" FontSize="12"/>
+      <StackPanel Orientation="Horizontal">
+       <TextBlock x:Name="EnergyLabel" Text="当前电量" Foreground="{DynamicResource Muted}" FontSize="12" VerticalAlignment="Center"/>
+       <Button x:Name="DailySignButton" Content="今日签到" Click="DailySignClick" Padding="8,2" MinHeight="24" FontSize="11" Margin="10,0,0,0" ToolTipService.ShowOnDisabled="True"/>
+      </StackPanel>
       <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
        <TextBlock x:Name="EnergyNumber" Text="—" FontFamily="Bahnschrift" FontWeight="Bold" FontSize="70" LineHeight="76"/>
        <TextBlock x:Name="EnergyMax" Text="/ —" FontSize="20" FontFamily="Bahnschrift" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="7,0,0,13"/>
@@ -88,5 +91,5 @@
    </Grid>
   </Grid>
  </Border>
- </Grid>
+ </Grid></Viewbox>
 </ScrollViewer></Window>

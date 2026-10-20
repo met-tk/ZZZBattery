@@ -14,7 +14,8 @@ namespace ZzzBattery.Windows;
 public partial class MainWindow : Window
 {
     private readonly Border[] _segments = new Border[24];
-    private readonly DispatcherTimer _positionTimer = new() { Interval = TimeSpan.FromMilliseconds(700) };
+    private readonly WindowPlacementController _placement;
+    internal WindowPlacementController PlacementForCheck => _placement;
     private string? _notice;
     private DateTimeOffset _noticeUntil;
 
@@ -26,6 +27,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         Character.LaunchRequested += (_, _) => App.Current.LaunchGame();
         Character.RefreshRequested += async (_, _) => await App.Current.Refresh();
+        Character.DailySignRequested += async (_, _) => await App.Current.SignToday();
         Character.CommunityRequested += (_, _) => App.Current.OpenCommunity();
         Character.WallpaperRequested += (_, _) => App.Current.OpenWallpapers();
         Character.DetailsRequested += (_, _) => { App.Current.Settings.Expanded = !App.Current.Settings.Expanded; App.Current.SaveSettings(); };
@@ -37,23 +39,17 @@ public partial class MainWindow : Window
         var settings = App.Current.Settings;
         Left = settings.Left is { } x && double.IsFinite(x) ? x : SystemParameters.WorkArea.Right - Width - 28;
         Top = settings.Top is { } y && double.IsFinite(y) ? y : SystemParameters.WorkArea.Top + 70;
-        Loaded += (_, _) => { ApplySettings(); DesktopIntegration.KeepVisible(this); Render(); };
-        LocationChanged += (_, _) => { _positionTimer.Stop(); _positionTimer.Start(); };
-        SizeChanged += (_, _) => Dispatcher.BeginInvoke(() => DesktopIntegration.KeepVisible(this));
-        _positionTimer.Tick += (_, _) =>
-        {
-            _positionTimer.Stop();
-            settings.Left = Left; settings.Top = Top; App.Current.SavePosition();
-        };
+        _placement = new(this, settings);
+        Loaded += (_, _) => { ApplySettings(); Render(); _placement.QueueRestore(); };
         Closing += (_, e) => { if (!App.Current.Exiting) { e.Cancel = true; Hide(); } };
-        Closed += (_, _) => _positionTimer.Stop();
     }
     public void ApplySettings()
     {
         var settings = App.Current.Settings;
         var character = settings.CharacterStyle && !settings.Mini;
-        MaxHeight = Math.Max(300, SystemParameters.WorkArea.Height - 16);
-        Width = settings.Mini ? 304 : character ? 376 : 360;
+        var preferredWidth = settings.Mini ? 304 : character ? 376 : 360;
+        WidgetContent.Width = preferredWidth;
+        Width = preferredWidth;
         CharacterShell.Visibility = character ? Visibility.Visible : Visibility.Collapsed;
         ClassicShell.Visibility = character ? Visibility.Collapsed : Visibility.Visible;
         Standard.Visibility = settings.Mini ? Visibility.Collapsed : Visibility.Visible;
@@ -63,6 +59,7 @@ public partial class MainWindow : Window
 
         _ = ApplyWallpaperAsync();
         Render();
+        _placement.QueueRestore();
     }
     public async Task ApplyWallpaperAsync()
     {
@@ -85,6 +82,11 @@ public partial class MainWindow : Window
     {
         var app = App.Current;
         var session = app.Session;
+        var signText = app.Demo ? "今日签到" : app.DailySign.ButtonText;
+        var signEnabled = !app.Demo && !app.DailySign.Busy && !app.DailySign.IsSignedToday;
+        var signHint = app.Demo ? "演示界面，不会发送签到请求。" : "绝区零米游社每日签到 · " + app.DailySign.Message;
+        Character.SetDailySign(signText, signEnabled, signHint);
+        DailySignButton.Content = signText; DailySignButton.IsEnabled = signEnabled; DailySignButton.ToolTip = signHint;
         var snapshot = app.Demo ? app.DemoSnapshot : session.Snapshot;
         var notes = snapshot is null ? null : NoteBoard.WithMissing(NoteBoard.Project(snapshot, DateTimeOffset.UtcNow,
             !app.Demo && (session.ClockUncertain || session.Failure is not null)));
@@ -166,9 +168,14 @@ public partial class MainWindow : Window
             for (var current = source; current is not null; current = VisualTreeHelper.GetParent(current))
                 if (current is Button) return;
         }
-        try { DragMove(); DesktopIntegration.KeepVisible(this, true); } catch (InvalidOperationException) { }
+        _placement.BeginUserMove();
+        try { DragMove(); } catch (InvalidOperationException) { }
+        finally { _placement.EndUserMove(); }
     }
+    public void RestorePosition() => _placement.QueueRestore();
+    public void FlushUserPosition() => _placement.FlushUserPosition();
     private async void RefreshClick(object sender, RoutedEventArgs e) => await App.Current.Refresh();
+    private async void DailySignClick(object sender, RoutedEventArgs e) => await App.Current.SignToday();
     private void MiniClick(object sender, RoutedEventArgs e) { App.Current.Settings.Mini = !App.Current.Settings.Mini; App.Current.SaveSettings(); }
     private void DetailsClick(object sender, RoutedEventArgs e) { App.Current.Settings.Expanded = !App.Current.Settings.Expanded; App.Current.SaveSettings(); }
     private void AccountClick(object sender, RoutedEventArgs e)

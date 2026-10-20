@@ -25,7 +25,7 @@ public sealed record NoteLine(string Name, string Value, bool Pending = false,
 public sealed record EnergySnapshot(
     string AccountKey, string RoleKey, int Current, int Maximum, int? RestoreSeconds,
     DateTimeOffset ReceivedAt, IReadOnlyList<NoteLine> Notes,
-    string SupplementMessage = "", int SchemaVersion = 0, string Source = "实时便笺");
+    string SupplementMessage = "", int SchemaVersion = 0, string Source = "实时便笺", bool? CommunitySigned = null);
 
 // Contains no cookies, challenge proofs, or raw server messages. Delays are saved
 // relative to SavedAt so a restart preserves both backoff and the manual cooldown.
@@ -75,6 +75,7 @@ public sealed class WidgetSettings
     public string GameExecutable { get; set; } = "";
     public double? Left { get; set; }
     public double? Top { get; set; }
+    public WindowPlacement? Placement { get; set; }
     public string DeviceId { get; set; } = Guid.NewGuid().ToString();
 }
 

@@ -3,24 +3,13 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:ZzzBattery.Windows"
  Title="选择壁纸 — 绝区零桌面电量" Style="{StaticResource {x:Type Window}}"
- Width="980" Height="790" MinWidth="800" MinHeight="580" Background="#282A29" Foreground="#F0F0F0" WindowStartupLocation="CenterScreen">
+ Width="980" Height="790" MinWidth="480" MinHeight="420" Background="#282A29" Foreground="#F0F0F0" WindowStartupLocation="CenterScreen">
  <Window.Resources>
   <SolidColorBrush x:Key="AccentText" Color="#FFDE00"/>
   <SolidColorBrush x:Key="Ink" Color="#F0F0F0"/>
   <SolidColorBrush x:Key="Panel" Color="#333534"/>
   <SolidColorBrush x:Key="Stroke" Color="#444746"/>
-  <Style TargetType="ScrollBar">
-   <Setter Property="Width" Value="10"/><Setter Property="Background" Value="#1D1F1E"/>
-   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
-    <Grid Background="{TemplateBinding Background}">
-     <Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="Vertical" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" ViewportSize="{TemplateBinding ViewportSize}" Value="{TemplateBinding Value}">
-      <Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
-      <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#565C58" CornerRadius="4" Margin="2,1"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
-      <Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
-     </Track>
-    </Grid>
-   </ControlTemplate></Setter.Value></Setter>
-  </Style>
+  <SolidColorBrush x:Key="Muted" Color="#9FA4A1"/>
   <Style x:Key="WallpaperItem" TargetType="ListBoxItem">
    <Setter Property="Margin" Value="7,7,7,13"/><Setter Property="Padding" Value="0"/>
    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -39,20 +28,25 @@
   </Style>
  </Window.Resources>
  <Grid>
-  <Grid.RowDefinitions><RowDefinition Height="82"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-  <Grid Margin="28,0">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid Margin="24,16">
    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+   <StackPanel VerticalAlignment="Center">
     <TextBlock Text="选择壁纸" FontSize="26" FontWeight="SemiBold"/>
-    <TextBlock x:Name="CatalogCount" FontSize="12" Foreground="#9FA4A1" VerticalAlignment="Bottom" Margin="15,0,0,5"/>
+    <TextBlock x:Name="CatalogCount" FontSize="12" Foreground="#9FA4A1" Margin="0,3,0,0"/>
    </StackPanel>
-   <Button x:Name="RefreshCatalogButton" Grid.Column="1" Content="⟳  更新壁纸" Click="RefreshCatalogClick" VerticalAlignment="Center"/>
+   <StackPanel Grid.Column="1" VerticalAlignment="Center">
+    <Button x:Name="RefreshCatalogButton" Content="⟳  更新壁纸" Click="RefreshCatalogClick"/>
+    <Button x:Name="PreviewToggle" Content="查看预览" Click="PreviewToggleClick" Margin="0,5,0,0" Visibility="Collapsed"/>
+   </StackPanel>
   </Grid>
-  <Grid Grid.Row="1">
-   <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="344"/></Grid.ColumnDefinitions>
-   <Grid>
+  <Grid x:Name="GalleryLayout" Grid.Row="1" SizeChanged="GalleryLayoutSized">
+   <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition x:Name="PreviewColumn" Width="344"/></Grid.ColumnDefinitions>
+   <Grid x:Name="GalleryPane">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
     <StackPanel Margin="26,0,14,14">
+     <Expander Header="属性与特性筛选" x:Name="FilterExpander" IsExpanded="True" Foreground="#D9DBDD">
+      <StackPanel Margin="0,8,0,0">
      <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition/></Grid.ColumnDefinitions>
       <TextBlock Text="属性" VerticalAlignment="Top" Margin="0,13,0,0" FontSize="14"/>
       <WrapPanel x:Name="ElementFilters" Grid.Column="1"/>
@@ -61,6 +55,8 @@
       <TextBlock Text="特性" VerticalAlignment="Top" Margin="0,13,0,0" FontSize="14"/>
       <WrapPanel x:Name="ProfessionFilters" Grid.Column="1"/>
      </Grid>
+      </StackPanel>
+     </Expander>
      <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Grid>
        <TextBox x:Name="SearchBox" TextChanged="SearchChanged" Background="#1D1F1E" Foreground="#F0F0F0" CaretBrush="White" BorderBrush="#414542" Padding="10,7" ToolTip="搜索角色或皮肤名称" AutomationProperties.Name="搜索角色或皮肤名称"/>
@@ -72,7 +68,7 @@
     <Grid Grid.Row="1" Background="#1D1F1E">
      <ListBox x:Name="WallpaperList" Background="Transparent" BorderThickness="0" Padding="16,12,10,12" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
        ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.ScrollChanged="GalleryScrolled" SizeChanged="GallerySized" ItemContainerStyle="{StaticResource WallpaperItem}" SelectionChanged="WallpaperSelected">
-      <ListBox.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+      <ListBox.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding GalleryColumns, RelativeSource={RelativeSource AncestorType={x:Type local:WallpaperWindow}}}"/></ItemsPanelTemplate></ListBox.ItemsPanel>
       <ListBox.ItemTemplate><DataTemplate>
        <StackPanel ToolTip="{Binding Name}">
         <Grid Height="96" Background="{Binding Background}">
@@ -89,14 +85,14 @@
      <TextBlock x:Name="EmptyText" Text="没有符合条件的壁纸" Foreground="#9FA4A1" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
     </Grid>
    </Grid>
-   <Border Grid.Column="1" Background="#222423" BorderBrush="#363936" BorderThickness="1,0,0,0" Padding="22,24">
-    <StackPanel>
+   <Border x:Name="PreviewPane" Grid.Column="1" Background="#222423" BorderBrush="#363936" BorderThickness="1,0,0,0" Padding="22,20">
+    <ScrollViewer Style="{StaticResource WidgetScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
      <Grid Margin="0,0,0,18"><TextBlock Text="小组件预览" FontSize="14"/><TextBlock Text="演示数据" Foreground="#9FA4A1" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid>
-     <Viewbox Stretch="Uniform" HorizontalAlignment="Stretch"><local:CharacterCard x:Name="PreviewCard" IsHitTestVisible="False"/></Viewbox>
+     <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxHeight="360" HorizontalAlignment="Stretch"><local:CharacterCard x:Name="PreviewCard" IsHitTestVisible="False"/></Viewbox>
      <TextBlock x:Name="SelectedName" FontSize="19" FontWeight="SemiBold" Margin="0,22,0,8" TextWrapping="Wrap"/>
      <TextBlock x:Name="PreviewStatus" Foreground="#A9AEAA" FontSize="12" TextWrapping="Wrap" MinHeight="38"/>
      <Button x:Name="ApplyButton" Content="应用到桌面" Click="ApplyClick" Background="#FFDE00" Foreground="#151716" FontWeight="SemiBold" Margin="0,18,0,0" Padding="12,12" IsEnabled="False"/>
-    </StackPanel>
+    </StackPanel></ScrollViewer>
    </Border>
   </Grid>
   <Grid Grid.Row="2" Margin="26,13">

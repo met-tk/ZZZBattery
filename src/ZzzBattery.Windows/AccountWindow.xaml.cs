@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using Microsoft.Win32;
@@ -20,14 +21,23 @@ public partial class AccountWindow : Window
     private Credential? _candidate;
     private bool _import, _closed, _initializing, _browserFailed;
     private int _generation;
-    public AccountWindow()
+    private readonly DispatcherTimer _fitTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
+    public AccountWindow(bool loadPage = true)
     {
         InitializeComponent();
         _popups = new OfficialPopupHost(this, text => { if (!_closed) Status.Text = text; });
-        Width = Math.Min(1180, SystemParameters.WorkArea.Width - 40);
-        Height = Math.Min(760, SystemParameters.WorkArea.Height - 40);
-        Loaded += async (_, _) => await InitializeBrowser();
-        Closed += (_, _) => { _closed = true; BrowserReady = false; _cancel.Cancel(); _popups.CloseAll(); Browser.Dispose(); _cancel.Dispose(); };
+        Width = 1180;
+        AdaptiveWindow.Attach(this, 500, 440);
+        Browser.SizeChanged += (_, _) => { if (BrowserReady && !_closed) { _fitTimer.Stop(); _fitTimer.Start(); } };
+        _fitTimer.Tick += async (_, _) =>
+        {
+            _fitTimer.Stop();
+            if (!BrowserReady || _closed) return;
+            Browser.ZoomFactor = Math.Clamp(Browser.ActualWidth / 1440d, .3, 1);
+            await FitOfficialPage();
+        };
+        if (loadPage) Loaded += async (_, _) => await InitializeBrowser();
+        Closed += (_, _) => { _closed = true; BrowserReady = false; _fitTimer.Stop(); _cancel.Cancel(); _popups.CloseAll(); Browser.Dispose(); _cancel.Dispose(); };
         CookieInput.PasswordChanged += (_, _) => ResetCandidate();
     }
     private void ResetCandidate() { _generation++; _candidate = null; Roles.ItemsSource = null; Roles.Visibility = Visibility.Collapsed; UseButton.IsEnabled = false; }
@@ -112,7 +122,7 @@ public partial class AccountWindow : Window
             if (_closed || !BrowserReady) return;
             var dimensions = JsonSerializer.Deserialize<double[]>(json);
             if (dimensions is { Length: 2 } && dimensions[0] > 0 && dimensions[1] > dimensions[0])
-                Browser.ZoomFactor = Math.Clamp(Browser.ZoomFactor * dimensions[0] / dimensions[1], .5, 1);
+                Browser.ZoomFactor = Math.Clamp(Browser.ZoomFactor * dimensions[0] / dimensions[1], .3, 1);
         }
         catch (Exception error) when (error is InvalidOperationException or JsonException or System.Runtime.InteropServices.COMException) { }
     }

@@ -51,7 +51,7 @@ public sealed class LocalStore
     }
     public void ClearAccount()
     {
-        foreach (var name in new[] { "credentials.dpapi", "snapshot.json", "reminders.json", "sync-state.json" })
+        foreach (var name in new[] { "credentials.dpapi", "snapshot.json", "reminders.json", "sync-state.json", "daily-sign.json" })
             if (File.Exists(FilePath(name))) File.Delete(FilePath(name));
     }
 }

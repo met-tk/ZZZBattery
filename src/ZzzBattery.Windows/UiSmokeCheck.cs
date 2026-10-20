@@ -76,16 +76,63 @@ internal static class UiSmokeCheck
             verification.Show(); verification.ShowFailureForCheck(); verification.UpdateLayout();
             Capture(verification, app, "verification-unavailable"); verification.Close();
             await CheckSettings(app);
+            await CheckDailySign(app, window);
             await CheckVerificationRecovery(app);
             File.WriteAllText(Path.Combine(app.Store.Root, "ui-smoke-result.json"), JsonSerializer.Serialize(new
             { passed = true, states = true, pagination = true, details = true, filters = true, dpi = new[] { 100, 150, 200 }, stale = true, shortScreen = true, qrLogin = true,
                 slimScrollbar = true, thumbDrag = true, mouseWheel = true, verificationFailurePanel = true,
+                dailySign = new { headerLayout = true, states = true, clickDispatch = true, signedDisabled = true, officialQr = true, accountIsolation = true, noSubmission = true },
                 settings = new { navigation = true, modes = true, toggles = true, persistence = true, themedDropdown = true, reminderDependency = true, shortWindow = true },
                 recovery = new { capturedNote = true, wrongRoleRejected = true, malformedResponseRejected = true, staleCacheRejected = true, ordinarySyncClosesWindow = true, automaticClose = true, webViewResponsePipeline = true } }));
         }
         catch (Exception error)
         { File.WriteAllText(Path.Combine(app.Store.Root, "ui-smoke-result.json"), JsonSerializer.Serialize(new { passed = false, error = error.ToString() })); }
         finally { app.Quit(); }
+    }
+    private static async Task CheckDailySign(App app, MainWindow window)
+    {
+        static void Assert(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var preview = new CharacterCard();
+        preview.Measure(new Size(360, 420)); preview.Arrange(new Rect(0, 0, 360, 420)); preview.UpdateLayout();
+        var button = (Button)preview.FindName("DailySignButton");
+        var refresh = (Button)preview.FindName("RefreshButton");
+        var requests = 0; preview.DailySignRequested += (_, _) => requests++;
+        foreach (var text in new[] { "今日签到", "签到中…", "查询中…", "需验证", "稍后重试", "待确认", "请登录", "已签到" })
+        {
+            preview.SetDailySign(text, true, "界面检查"); preview.UpdateLayout();
+            Assert((string)button.Content == text && button.ActualWidth >= 64, "Sign label does not fit.");
+            var right = button.TransformToAncestor(preview).Transform(new Point(button.ActualWidth, 0)).X;
+            var nextLeft = refresh.TransformToAncestor(preview).Transform(new Point(0, 0)).X;
+            Assert(right < nextLeft && right < 360, "Sign button overlaps refresh.");
+            if (text == "已签到") Assert(!button.IsEnabled, "Signed button must be disabled.");
+        }
+        preview.SetDailySign("今日签到", true, "点击签到");
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert(requests == 1, "Sign click was not dispatched exactly once.");
+        Capture(preview, Path.Combine(app.Store.Root, "daily-sign-button.png"));
+        preview.SetDailySign("已签到", false, "今日已签到");
+        Capture(preview, Path.Combine(app.Store.Root, "daily-sign-button-complete.png"));
+
+        app.Demo = false;
+        var credential = new Credential { AccountKey = "ui-sign", Role = new("100", "prod_gf_cn", "演示角色", "国服") };
+        app.Session.SetCredential(credential);
+        var now = DateTimeOffset.UtcNow;
+        app.DailySign.SetCredential(credential, new(credential.AccountKey, credential.Role.Key, now,
+            RetryAt: now.AddMinutes(15), NextCheckAt: now.AddMinutes(15), FailureKind: FailureKind.Verification, FailureCode: 10035));
+        var signWindow = new DailySignWindow(credential); signWindow.Show(); await Task.Delay(80);
+        Assert(((Image)signWindow.FindName("QrImage")).Source is not null, "Official sign QR missing.");
+        Assert(!((Button)signWindow.FindName("CheckButton")).IsEnabled, "Cooldown was discarded.");
+        Capture(signWindow, app, "daily-sign-official");
+        app.DailySign.ObserveSigned(true, DateTimeOffset.UtcNow, credential.AccountKey, credential.Role.Key);
+        await Task.Delay(80); window.Render(); signWindow.UpdateLayout();
+        Assert((string)((Button)window.Character.FindName("DailySignButton")).Content == "已签到", "Confirmed sign not rendered.");
+        Assert(((TextBlock)signWindow.FindName("StatusHeading")).Text == "今日已签到", "Sign recovery window did not reflect confirmation.");
+        Capture(signWindow, app, "daily-sign-confirmed");
+        app.Session.SetCredential(new Credential { AccountKey = "other", Role = credential.Role });
+        await Task.Delay(80);
+        Assert(!((Button)signWindow.FindName("CheckButton")).IsEnabled, "Old role window is still actionable.");
+        Assert(((TextBlock)signWindow.FindName("StatusHeading")).Text == "账号或角色已切换", "Old role window did not invalidate.");
+        signWindow.Close();
     }
     private static async Task CheckVerificationRecovery(App app)
     {

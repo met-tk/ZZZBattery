@@ -12,10 +12,8 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
-        Width = Math.Min(560, Math.Max(320, SystemParameters.WorkArea.Width - 40));
-        Height = Math.Min(680, Math.Max(300, SystemParameters.WorkArea.Height - 40));
-        MinWidth = Math.Min(440, Width); MinHeight = Math.Min(360, Height);
-        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.2.6");
+        AdaptiveWindow.Attach(this, 380, 300);
+        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.2.7");
         RefreshSettings();
         AppearanceTab.IsChecked = true;
         Activated += (_, _) => RefreshSettings();
