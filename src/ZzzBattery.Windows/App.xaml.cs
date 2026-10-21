@@ -35,6 +35,7 @@ public partial class App : Application
     private AccountWindow? _account;
     private SettingsWindow? _settings;
     private VerificationWindow? _verification;
+    private OfficialNoteBrowser? _officialNotes;
     private DailySignWindow? _dailySignWindow;
     private Forms.ToolStripMenuItem? _dailySignMenu;
     private DateTimeOffset _dailySignReadyAt;
@@ -52,10 +53,11 @@ public partial class App : Application
         {
             var rootIndex = Array.IndexOf(e.Args, "--data-dir");
             var uiSmoke = e.Args.Contains("--ui-smoke-test");
+            var backgroundSmoke = e.Args.Contains("--background-smoke-test");
             var displaySmoke = e.Args.Contains("--display-smoke-test");
             var placementIndex = Array.IndexOf(e.Args, "--placement-smoke-test");
             var placementSmoke = placementIndex >= 0;
-            var smoke = e.Args.Contains("--smoke-test") || uiSmoke || placementSmoke || displaySmoke;
+            var smoke = e.Args.Contains("--smoke-test") || uiSmoke || placementSmoke || displaySmoke || backgroundSmoke;
             if (smoke && (rootIndex < 0 || rootIndex + 1 >= e.Args.Length))
             {
                 MessageBox.Show("运行检查请使用 --data-dir 指定独立测试目录。", "绝区零桌面电量");
@@ -83,13 +85,14 @@ public partial class App : Application
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, AutomaticDecompression = DecompressionMethods.All })
             { Timeout = TimeSpan.FromSeconds(20) };
             Client = new MiyousheClient(_http, Settings.DeviceId, includeWidget: true);
-            Session = new WidgetSession(Client);
+            _officialNotes = new OfficialNoteBrowser(root);
+            Session = new WidgetSession(Client, officialNoteReader: _officialNotes.ReadAsync);
             DailySign = new DailySignSession(Client);
             _dailySignReadyAt = DateTimeOffset.UtcNow.AddSeconds(15);
             Demo = e.Args.Contains("--demo");
             DemoSnapshot = DemoData.Create(DateTimeOffset.UtcNow);
             var credential = Demo || smoke ? null : Store.LoadCredential();
-            Session.CheckpointChanged += checkpoint => SafeStore(() => Store.Write("sync-state.json", checkpoint));
+            Session.CheckpointChanged += checkpoint => Store.Write("sync-state.json", checkpoint);
             Session.SetCredential(credential, smoke ? null : Store.Read<EnergySnapshot>("snapshot.json"),
                 smoke ? null : Store.Read<SyncCheckpoint>("sync-state.json"));
             DailySign.SetCredential(credential, smoke ? null : Store.Read<DailySignCheckpoint>("daily-sign.json"));
@@ -110,10 +113,9 @@ public partial class App : Application
                 _widget?.Render();
             });
             _widget = new MainWindow(); MainWindow = _widget;
-            BuildTray();
-            _widget.Show(); _widget.ApplySettings();
+            if (!backgroundSmoke) { BuildTray(); _widget.Show(); _widget.ApplySettings(); }
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _timer.Tick += Tick; if (!uiSmoke && !placementSmoke && !displaySmoke) _timer.Start();
+            _timer.Tick += Tick; if (!uiSmoke && !placementSmoke && !displaySmoke && !backgroundSmoke) _timer.Start();
             SystemEvents.PowerModeChanged += PowerChanged;
             SystemEvents.DisplaySettingsChanged += DisplayChanged;
             SystemEvents.TimeChanged += TimeChanged;
@@ -129,7 +131,8 @@ public partial class App : Application
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
                 { _widget.SetNotice("自动启动路径暂未更新，请在设置中重新开关“开机自动启动”。"); }
             }
-            if (displaySmoke) _smokeTask = DisplaySmokeCheck.RunAsync(this, _widget);
+            if (backgroundSmoke) _smokeTask = BackgroundSmokeCheck.RunAsync(this);
+            else if (displaySmoke) _smokeTask = DisplaySmokeCheck.RunAsync(this, _widget);
             else if (placementSmoke) _smokeTask = PlacementSmokeCheck.RunAsync(this, _widget,
                 placementIndex + 1 < e.Args.Length ? e.Args[placementIndex + 1] : "");
             else if (uiSmoke) _smokeTask = UiSmokeCheck.RunAsync(this, _widget);
@@ -226,6 +229,7 @@ public partial class App : Application
     public void OpenVerification()
     {
         if (Session.Credential?.Role is null) { OpenAccount(); return; }
+        if (Session.RecoveringInBackground) { _widget.SetNotice("正在后台恢复同步，请稍候。"); return; }
         if (_verification is not null) { _verification.Activate(); return; }
         if (Session.Failure?.Kind != FailureKind.Verification &&
             !(Session.Failure?.Kind == FailureKind.Permission && Session.Failure.Code is 5003 or 10041))
@@ -254,6 +258,7 @@ public partial class App : Application
         Store.SaveCredential(credential);
         Demo = false; _reminders = new();
         Session.SetCredential(credential);
+        _officialNotes?.Reset();
         var signCheckpoint = Store.Read<DailySignCheckpoint>("daily-sign.json");
         if (signCheckpoint?.FailureKind == FailureKind.Login)
             signCheckpoint = signCheckpoint with { FailureKind = null, FailureCode = null };
@@ -264,6 +269,7 @@ public partial class App : Application
     {
         _verification?.Close(); _dailySignWindow?.Close(); Client.ForgetVerification();
         Store.ClearAccount(); Session.SetCredential(null); _reminders = new(); Demo = false;
+        _officialNotes?.Reset();
         _account?.Close(); _widget.Render();
     }
     public async Task SignToday()
@@ -361,7 +367,7 @@ public partial class App : Application
     }
     protected override void OnExit(ExitEventArgs e)
     {
-        Exiting = true; _timer?.Stop(); DailySign?.Dispose(); Session?.Dispose(); _http?.Dispose(); Wallpapers?.Dispose();
+        Exiting = true; _timer?.Stop(); DailySign?.Dispose(); Session?.Dispose(); _officialNotes?.Dispose(); _http?.Dispose(); Wallpapers?.Dispose();
         if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); }
         SystemEvents.PowerModeChanged -= PowerChanged;
         SystemEvents.DisplaySettingsChanged -= DisplayChanged;

@@ -15,9 +15,30 @@
     <TextBlock Text="小组件设置" FontSize="25" FontWeight="SemiBold"/>
     <TextBlock Text="让电量小组件，更适合你的桌面。" Style="{StaticResource SettingsDescription}"/>
    </StackPanel>
-   <Border Grid.Column="1" Background="{DynamicResource Panel}" CornerRadius="8" Padding="10,5" VerticalAlignment="Top" Margin="12,6,0,0">
-    <TextBlock x:Name="VersionText" FontSize="11" Foreground="{DynamicResource Muted}"/>
-   </Border>
+   <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="12,6,0,0">
+    <Button Click="AuthorClick" Cursor="Hand" ToolTip="https://space.bilibili.com/24340298" FocusVisualStyle="{x:Null}" Margin="0,0,8,0">
+     <Button.Template>
+      <ControlTemplate TargetType="Button">
+       <Border x:Name="Frame" Background="{DynamicResource Panel}" BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Padding="10,5">
+        <TextBlock x:Name="Txt" Text="AI-driven by taketo" FontSize="11" Foreground="{DynamicResource Muted}"/>
+       </Border>
+       <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+         <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource AccentText}"/>
+         <Setter TargetName="Txt" Property="Foreground" Value="{DynamicResource Ink}"/>
+        </Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True">
+         <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource AccentText}"/>
+         <Setter TargetName="Txt" Property="Foreground" Value="{DynamicResource Ink}"/>
+        </Trigger>
+       </ControlTemplate.Triggers>
+      </ControlTemplate>
+     </Button.Template>
+    </Button>
+    <Border Background="{DynamicResource Panel}" BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Padding="10,5">
+     <TextBlock x:Name="VersionText" FontSize="11" Foreground="{DynamicResource Muted}"/>
+    </Border>
+   </StackPanel>
   </Grid>
   <Border Grid.Row="1" Margin="26,0,26,16" Background="{DynamicResource Panel}" CornerRadius="11" Padding="4">
    <UniformGrid Columns="4">

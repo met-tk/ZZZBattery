@@ -95,6 +95,7 @@ public partial class VerificationWindow : Window
             ChallengeBrowser.CreationProperties = new CoreWebView2CreationProperties
             {
                 UserDataFolder = Path.Combine(App.Current.Store.Root, "WebViewProfile"),
+                ProfileName = OfficialNoteBrowser.ProfileName(_credential),
                 IsInPrivateModeEnabled = true
             };
             await ChallengeBrowser.EnsureCoreWebView2Async().WaitAsync(TimeSpan.FromSeconds(20), _cancel.Token);
@@ -241,20 +242,7 @@ public partial class VerificationWindow : Window
     {
         try
         {
-            var cookies = Cookies.Parse(_credential.Cookie);
-            var domains = new[] { ".mihoyo.com", ".miyoushe.com", "act.mihoyo.com" };
-            foreach (var (name, value) in cookies)
-            {
-                foreach (var domain in domains)
-                {
-                    try
-                    {
-                        var c = core.CookieManager.CreateCookie(name, value, domain, "/");
-                        core.CookieManager.AddOrUpdateCookie(c);
-                    }
-                    catch { }
-                }
-            }
+            OfficialNoteBrowser.InjectCookies(core, _credential);
         }
         catch { }
     }
@@ -497,9 +485,7 @@ public partial class VerificationWindow : Window
         {
             // The browser already fetched real data. Apply it immediately; do not
             // probe a separately restricted widget endpoint before accepting it.
-            snapshot = snapshot with { SupplementMessage = _failure?.VerificationPath == "/api/zzz/widget"
-                ? "官方网页便笺已同步；小组件接口仍待下次查询确认，补充活动暂不可用。"
-                : "来自官方网页便笺；补充活动将在小组件下次成功同步后更新。" };
+            snapshot = snapshot with { SupplementMessage = "通过官方网页便笺后台同步；网页未提供的小组件活动信息暂不可用。" };
             App.Current.Session.ResumeAfterVerification(snapshot);
             TriggerAutoClose();
             App.Current.ShowWidget();
@@ -564,7 +550,7 @@ public partial class VerificationWindow : Window
         TitleText.Text = "电量已同步";
         var fromPage = App.Current.Session.Snapshot?.Source == "官方网页便笺";
         DescText.Text = fromPage
-            ? "已读取所选角色的官方网页便笺，无需继续寻找验证码。小组件补充活动是否恢复，以后续查询结果为准。"
+            ? "已读取所选角色的官方网页便笺，后续将优先在后台通过此渠道同步。"
             : "已取得所选角色的最新电量，无需继续验证。";
         Status.Text = (fromPage ? "官方网页便笺已同步。" : "自动同步已恢复。") + "窗口将在 3 秒后关闭。";
         RetryButton.IsEnabled = SwitchModeButton.IsEnabled = CheckSyncButton.IsEnabled = false;

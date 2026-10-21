@@ -1,6 +1,7 @@
 namespace ZzzBattery.Core;
 
-public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = null) : IDisposable
+public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = null,
+    Func<Credential, CancellationToken, Task<EnergySnapshot>>? officialNoteReader = null) : IDisposable
 {
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private CancellationTokenSource _cancel = new();
@@ -13,10 +14,12 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
     private TimeSpan _cooldownDelay;
     private long _scheduleStamp;
     private TimeSpan _scheduleDelay;
+    private bool _preferOfficialPage, _automaticRecoveryAttempted;
     public Credential? Credential { get; private set; }
     public EnergySnapshot? Snapshot { get; private set; }
     public ApiFailure? Failure { get; private set; }
     public bool Busy { get; private set; }
+    public bool RecoveringInBackground { get; private set; }
     public bool ClockUncertain { get; private set; }
     private TimeSpan ScheduledRemaining => TimeSpan.FromTicks(Math.Max(0,
         (_scheduleDelay - _clock.GetElapsedTime(_scheduleStamp)).Ticks));
@@ -36,13 +39,15 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
     {
         _generation++;
         _cancel.Cancel(); _cancel.Dispose(); _cancel = new();
-        _flight = Task.CompletedTask; Busy = false;
+        _flight = Task.CompletedTask; Busy = false; RecoveringInBackground = false;
         Credential = credential;
         Snapshot = credential?.Role is not null && cached is { Current: >= 0 and <= 1000000, Maximum: > 0 and <= 1000000, Notes: not null } &&
             cached.Notes.Count <= 150 && cached.Notes.All(n => n is { Name: not null, Value: not null, Id: not null, Group: not null, Detail: not null, Source: not null }) &&
             cached.ReceivedAt != default && cached.AccountKey == credential?.AccountKey &&
             cached.RoleKey == credential.Role?.Key ? cached : null;
         Failure = null; _failures = 0; ClockUncertain = false;
+        _preferOfficialPage = Snapshot?.Source == "官方网页便笺";
+        _automaticRecoveryAttempted = false;
         Schedule(TimeSpan.Zero);
         SetCooldown(TimeSpan.Zero);
         ResetAnchor();
@@ -78,11 +83,22 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
 
     public SyncCheckpoint? CaptureCheckpoint() => Credential?.Role is { } role
         ? new(Credential.AccountKey, role.Key, _clock.GetUtcNow(), ScheduledRemaining, CooldownRemaining,
-            Failure?.Kind, Failure?.Code, _failures, VerificationPath: Failure?.VerificationPath) : null;
+            Failure?.Kind, Failure?.Code, _failures, VerificationPath: Failure?.VerificationPath,
+            PreferOfficialPage: _preferOfficialPage, AutomaticRecoveryAttempted: _automaticRecoveryAttempted) : null;
 
-    private void SaveCheckpoint()
+    private bool SaveCheckpoint()
     {
-        if (CaptureCheckpoint() is { } checkpoint) CheckpointChanged?.Invoke(checkpoint);
+        try
+        {
+            if (CaptureCheckpoint() is { } checkpoint) CheckpointChanged?.Invoke(checkpoint);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Failure = new(FailureKind.Permission, "无法保存同步状态，已暂停请求。请检查数据目录的写入权限后再刷新。");
+            Message = Failure.Message;
+            return false;
+        }
     }
 
     private bool RestoreCheckpoint(SyncCheckpoint? checkpoint)
@@ -99,6 +115,8 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
         Schedule(Nonnegative(checkpoint.RemainingDelay - elapsed));
         SetCooldown(Nonnegative(checkpoint.MinimumRefreshDelay - elapsed));
         _failures = checkpoint.ConsecutiveFailures;
+        _preferOfficialPage |= checkpoint.PreferOfficialPage;
+        _automaticRecoveryAttempted = checkpoint.AutomaticRecoveryAttempted;
         if (checkpoint.FailureKind is { } failureKind)
         {
             var known = checkpoint.FailureCode is { } code ? MiyousheClient.FromRetcode(code) : null;
@@ -114,6 +132,9 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             Failure = new(failureKind, message, checkpoint.FailureCode, ScheduledRemaining);
             Failure.VerificationPath = checkpoint.VerificationPath == "/api/zzz/widget" ? "/api/zzz/widget" : "/api/zzz/note";
             Message = message;
+            if (failureKind == FailureKind.Verification && _automaticRecoveryAttempted)
+                Failure = new(failureKind, Message = "后台恢复未完成，已暂停自动尝试。可在方便时点击“恢复电量同步”处理。",
+                    checkpoint.FailureCode, ScheduledRemaining) { VerificationPath = Failure.VerificationPath };
         }
         else Message = "已恢复上次数据，等待定时同步";
         return true;
@@ -162,8 +183,10 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             if (Snapshot is not null && verifiedSnapshot.ReceivedAt < Snapshot.ReceivedAt) return;
             // A response captured by the official page supersedes any older HTTP request.
             _generation++; _cancel.Cancel(); _cancel.Dispose(); _cancel = new();
-            _flight = Task.CompletedTask; Busy = false;
+            _flight = Task.CompletedTask; Busy = false; RecoveringInBackground = false;
             Snapshot = verifiedSnapshot;
+            _preferOfficialPage = verifiedSnapshot.Source == "官方网页便笺";
+            _automaticRecoveryAttempted = false;
             ResetAnchor();
             ClockUncertain = false;
             Failure = null;
@@ -181,6 +204,7 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
         {
             Failure = null;
             _failures = 0;
+            _automaticRecoveryAttempted = false;
         }
         if (resetCooldown)
         {
@@ -215,7 +239,8 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             }
             return Task.CompletedTask;
         }
-        if (!manual && (ScheduledRemaining > TimeSpan.Zero || Failure?.NeedsUser == true)) return Task.CompletedTask;
+        var canRecover = officialNoteReader is not null && Failure?.Kind == FailureKind.Verification && !_automaticRecoveryAttempted;
+        if (!manual && (ScheduledRemaining > TimeSpan.Zero || (Failure?.NeedsUser == true && !canRecover))) return Task.CompletedTask;
         _flight = FetchAsync(Credential, _generation, _cancel.Token);
         return _flight;
     }
@@ -224,12 +249,15 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
     {
         Busy = true; SetCooldown(TimeSpan.FromSeconds(60));
         Schedule(TimeSpan.FromSeconds(60)); // Persist before I/O, including interrupted/crashed requests.
-        Message = "正在同步米游社…"; SaveCheckpoint(); Changed?.Invoke();
+        Message = "正在同步米游社…";
+        if (!SaveCheckpoint()) { Busy = false; Changed?.Invoke(); return; }
+        Changed?.Invoke();
         try
         {
-            var snapshot = await client.GetNoteAsync(credential, credential.Role!, cancellation);
+            var snapshot = await ReadSnapshotAsync(credential, generation, cancellation);
             if (generation != _generation || cancellation.IsCancellationRequested) return;
             Snapshot = snapshot; ResetAnchor(); ClockUncertain = false; Failure = null; _failures = 0;
+            _automaticRecoveryAttempted = false;
             ScheduleSuccess();
             Message = "同步成功"; Synced?.Invoke(snapshot);
         }
@@ -248,8 +276,38 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
         }
         finally
         {
-            if (generation == _generation) { Busy = false; SaveCheckpoint(); Changed?.Invoke(); }
+            if (generation == _generation) { Busy = false; RecoveringInBackground = false; SaveCheckpoint(); Changed?.Invoke(); }
         }
+    }
+
+    private async Task<EnergySnapshot> ReadSnapshotAsync(Credential credential, int generation, CancellationToken cancellation)
+    {
+        if (officialNoteReader is null) return await client.GetNoteAsync(credential, credential.Role!, cancellation);
+        if (!_preferOfficialPage && Failure?.Kind != FailureKind.Verification)
+        {
+            try { return await client.GetNoteAsync(credential, credential.Role!, cancellation); }
+            catch (ApiFailure error) when (error.Kind == FailureKind.Verification &&
+                !_automaticRecoveryAttempted && !(error.RetryAfter > TimeSpan.Zero))
+            {
+                if (generation != _generation || cancellation.IsCancellationRequested) throw new OperationCanceledException(cancellation);
+                Failure = error;
+            }
+        }
+        cancellation.ThrowIfCancellationRequested();
+        // Keep using the working browser channel instead of probing the restricted widget each cycle.
+        _preferOfficialPage = true;
+        _automaticRecoveryAttempted = true;
+        RecoveringInBackground = true;
+        Message = "正在后台读取官方便笺，不会弹出窗口…";
+        Schedule(TimeSpan.FromMinutes(15)); // A crash must not immediately start another page load.
+        if (!SaveCheckpoint()) throw Failure!;
+        Changed?.Invoke();
+        var snapshot = await officialNoteReader(credential, cancellation);
+        if (snapshot.AccountKey != credential.AccountKey || snapshot.RoleKey != credential.Role!.Key ||
+            snapshot.Source != "官方网页便笺" || snapshot.ReceivedAt < _clock.GetUtcNow().AddMinutes(-1) ||
+            snapshot.ReceivedAt > _clock.GetUtcNow().AddMinutes(1))
+            throw new ApiFailure(FailureKind.Verification, "后台未取得当前角色的新数据，已暂停自动尝试。可点击“恢复电量同步”处理。");
+        return snapshot;
     }
 
     public void Dispose() { _cancel.Cancel(); _cancel.Dispose(); }

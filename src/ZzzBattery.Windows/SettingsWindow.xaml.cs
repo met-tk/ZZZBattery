@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,12 +9,13 @@ namespace ZzzBattery.Windows;
 
 public partial class SettingsWindow : Window
 {
+    private const string AuthorUrl = "https://space.bilibili.com/24340298";
     private bool _ready;
     public SettingsWindow()
     {
         InitializeComponent();
         AdaptiveWindow.Attach(this, 380, 300);
-        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.2.7");
+        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.3.0");
         RefreshSettings();
         AppearanceTab.IsChecked = true;
         Activated += (_, _) => RefreshSettings();
@@ -117,6 +119,11 @@ public partial class SettingsWindow : Window
     {
         try { App.Current.SignOut(); RefreshSettings(); SetStatus("已退出登录，并清除本机账号缓存。"); }
         catch { SetStatus("清除失败，请检查数据目录权限。", true); }
+    }
+    private void AuthorClick(object sender, RoutedEventArgs e)
+    {
+        try { Process.Start(new ProcessStartInfo(AuthorUrl) { UseShellExecute = true }); }
+        catch { }
     }
     private void DoneClick(object sender, RoutedEventArgs e) => Close();
 }

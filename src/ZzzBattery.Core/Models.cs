@@ -31,7 +31,8 @@ public sealed record EnergySnapshot(
 // relative to SavedAt so a restart preserves both backoff and the manual cooldown.
 public sealed record SyncCheckpoint(string AccountKey, string RoleKey, DateTimeOffset SavedAt,
     TimeSpan RemainingDelay, TimeSpan MinimumRefreshDelay, FailureKind? FailureKind = null,
-    int? FailureCode = null, int ConsecutiveFailures = 0, int SchemaVersion = 1, string? VerificationPath = null);
+    int? FailureCode = null, int ConsecutiveFailures = 0, int SchemaVersion = 1, string? VerificationPath = null,
+    bool PreferOfficialPage = false, bool AutomaticRecoveryAttempted = false);
 
 public sealed record EnergyProjection(int Current, int Maximum, int? RemainingSeconds,
     bool Estimated, bool Stale, bool Inconsistent)

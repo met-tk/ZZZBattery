@@ -129,11 +129,12 @@ public partial class MainWindow : Window
             (session.Failure?.Kind == FailureKind.Permission && session.Failure?.Code is 5003 or 10041);
         var needsConnection = session.Credential is null || session.Failure?.Kind == FailureKind.Login || isVerificationIssue;
         ConnectButton.Visibility = needsConnection || app.Demo ? Visibility.Visible : Visibility.Collapsed;
-        ConnectButton.Content = isVerificationIssue ? "恢复电量同步" :
+        ConnectButton.IsEnabled = !session.RecoveringInBackground;
+        ConnectButton.Content = session.RecoveringInBackground ? "正在后台恢复…" : isVerificationIssue ? "恢复电量同步" :
             session.Failure?.Kind == FailureKind.Login ? "重新连接米游社" : "连接米游社";
         var notice = DateTimeOffset.UtcNow < _noticeUntil ? _notice :
             app.Demo ? "这是演示数据。连接自己的米游社账号后即可显示真实电量。" :
-            session.Failure?.Message ?? (projection?.Stale == true ? "电量缓存已过期或时间发生变化，请刷新校准。" :
+            session.RecoveringInBackground ? session.Message : session.Failure?.Message ?? (projection?.Stale == true ? "电量缓存已过期或时间发生变化，请刷新校准。" :
             projection?.Inconsistent == true ? "恢复时间与电量不一致，暂时保留服务端数值。" :
             snapshot is { SupplementMessage.Length: > 0 } ? snapshot.SupplementMessage : null);
         NoticePanel.Visibility = string.IsNullOrEmpty(notice) ? Visibility.Collapsed : Visibility.Visible;
@@ -144,6 +145,7 @@ public partial class MainWindow : Window
         CharacterNoticePanel.Visibility = NoticePanel.Visibility;
         CharacterConnect.Visibility = ConnectButton.Visibility;
         CharacterConnect.Content = ConnectButton.Content;
+        CharacterConnect.IsEnabled = ConnectButton.IsEnabled;
         CharacterNotesBorder.Visibility = app.Settings.Expanded && snapshot is not null ? Visibility.Visible : Visibility.Collapsed;
         var recovery = projection is null ? "连接后查看电量" : projection.Stale ? "数据过期 · 等待同步" :
             projection.Full ? (projection.Current > projection.Maximum ? "已超过自然恢复上限" : "电量已回满") :
