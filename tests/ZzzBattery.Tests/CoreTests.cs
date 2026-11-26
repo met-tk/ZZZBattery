@@ -67,6 +67,59 @@ public sealed class CoreTests
         var c = Cookies.Create("""{"raw_cookie":"account_id=123; cookie_token=test"}""");
         Assert.Contains("cookie_token=test", c.Cookie);
     }
+    [Fact]
+    public void BrowserCookiesRejectMixedIdentityAndKeepSingleAccount()
+    {
+        Assert.Throws<ArgumentException>(() => Cookies.CreateFromBrowserCookies([
+            ("account_id", "123"), ("ltuid", "123"), ("cookie_token", "new-token"),
+            ("account_id_v2", "999"), ("ltoken_v2", "old-token")
+        ]));
+
+        var single = Cookies.CreateFromBrowserCookies([
+            ("account_id", "123"), ("ltuid", "123"), ("cookie_token", "old-token"),
+            ("account_id_v2", "123"), ("cookie_token", "new-token"), ("ltoken_v2", "ltoken")
+        ]);
+        Assert.Equal(Cookies.Create("account_id=123; account_id_v2=123; ltuid=123; cookie_token=new-token; ltoken_v2=ltoken").AccountKey, single.AccountKey);
+        Assert.Contains("cookie_token=new-token", single.Cookie);
+    }
+    [Fact]
+    public async Task RotatedCookiesAreReportedAndPersistedByHost()
+    {
+        var account = Credential();
+        Credential? changed = null;
+        using var http = new HttpClient(new Handler(_ =>
+        {
+            var response = Json("""{"retcode":0,"data":{"energy":{"progress":{"current":200,"max":240},"restore":14400}}}""");
+            response.Headers.TryAddWithoutValidation("Set-Cookie", "cookie_token_v2=rotated; Path=/");
+            return response;
+        }));
+        var client = new MiyousheClient(http, "device");
+        client.CredentialChanged += c => changed = c;
+        await client.GetNoteAsync(account, Role);
+        Assert.NotNull(changed);
+        Assert.Contains("cookie_token_v2=rotated", account.Cookie);
+    }
+    [Fact]
+    public async Task UnauthorizedRequestGetsOneSilentCredentialRecovery()
+    {
+        var account = Credential(); var calls = 0; Credential? changed = null;
+        using var http = new HttpClient(new Handler(_ =>
+        {
+            calls++;
+            return calls == 1 ? new HttpResponseMessage(HttpStatusCode.Unauthorized) :
+                Json("""{"retcode":0,"data":{"energy":{"progress":{"current":200,"max":240},"restore":14400}}}""");
+        }));
+        var client = new MiyousheClient(http, "device")
+        {
+            CredentialRecovery = (credential, _) => { credential.Cookie += "; cookie_token_v2=refreshed"; return Task.FromResult(true); }
+        };
+        client.CredentialChanged += c => changed = c;
+        var snapshot = await client.GetNoteAsync(account, Role);
+        Assert.Equal(200, snapshot.Current);
+        Assert.Equal(2, calls);
+        Assert.NotNull(changed);
+        Assert.Contains("cookie_token_v2=refreshed", changed!.Cookie);
+    }
     [Theory]
     [InlineData("mihoyo.com", true)]
     [InlineData("www.miyoushe.com", true)]

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -11,7 +12,7 @@ using ZzzBattery.Core;
 namespace ZzzBattery.Windows;
 
 // HWND_MESSAGE cannot appear on the desktop or receive foreground focus.
-internal sealed class OfficialNoteBrowser(string dataRoot) : IDisposable
+internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webViewProfilePath = null) : IDisposable
 {
     private CoreWebView2Controller? _controller;
     private string? _accountKey;
@@ -21,8 +22,34 @@ internal sealed class OfficialNoteBrowser(string dataRoot) : IDisposable
     internal static string ProfileName(Credential credential) =>
         "Energy_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(credential.AccountKey)))[..24];
 
+    internal void ClearSessionCookies()
+    {
+        try { _controller?.CoreWebView2?.CookieManager.DeleteAllCookies(); }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+    }
+
     public Task<EnergySnapshot> ReadAsync(Credential credential, CancellationToken cancellation) =>
         ReadCoreAsync(credential, cancellation);
+
+    internal async Task<bool> TryRefreshCredentialAsync(Credential credential, CancellationToken cancellation)
+    {
+        var browser = _controller?.CoreWebView2;
+        if (browser is null || _accountKey != credential.AccountKey) return false;
+        try
+        {
+            var cookies = await browser.CookieManager.GetCookiesAsync(null).WaitAsync(cancellation);
+            var refreshed = Cookies.CreateFromBrowserCookies(cookies
+                .Where(c => Cookies.IsOfficialHost(c.Domain.TrimStart('.')) && Cookies.Allowed.Contains(c.Name))
+                .Select(c => (c.Name, c.Value)));
+            if (refreshed.AccountKey != credential.AccountKey) return false;
+            var changed = !string.Equals(credential.Cookie, refreshed.Cookie, StringComparison.Ordinal);
+            if (changed) credential.Cookie = refreshed.Cookie;
+            return changed;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or
+            System.Runtime.InteropServices.COMException or OperationCanceledException)
+        { return false; }
+    }
 
     internal Task<EnergySnapshot> ReadForCheckAsync(Credential credential, Action<CoreWebView2> configure,
         CancellationToken cancellation = default, TimeSpan? timeout = null) =>
@@ -41,6 +68,7 @@ internal sealed class OfficialNoteBrowser(string dataRoot) : IDisposable
         var completion = new TaskCompletionSource<EnergySnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var generation = _generation;
         var readingResponse = false;
+        var processFailed = false;
         int? verificationCode = null;
         var verificationResponses = 0;
         ulong? navigationId = null;
@@ -50,7 +78,9 @@ internal sealed class OfficialNoteBrowser(string dataRoot) : IDisposable
         {
             if (token.IsCancellationRequested || completion.Task.IsCompleted || readingResponse ||
                 !Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri) || !MiyousheClient.IsNoteEndpoint(uri)) return;
-            if (!MiyousheClient.IsNoteRequestForRole(uri, credential.Role)) { NeedsUser(); return; }
+            // The official page can briefly request its remembered/default role before
+            // switching to the selected one. Ignore that response and keep listening.
+            if (!MiyousheClient.IsNoteRequestForRole(uri, credential.Role)) return;
             readingResponse = true;
             try
             {
@@ -109,18 +139,22 @@ internal sealed class OfficialNoteBrowser(string dataRoot) : IDisposable
         }
         void NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
         { if (e.NavigationId == navigationId && !e.IsSuccess && !completion.Task.IsCompleted) NeedsUser(); }
-        void ProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e) => NeedsUser();
+        void ProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+        {
+            processFailed = true;
+            NeedsUser();
+        }
         try
         {
             if (_accountKey != credential.AccountKey) { Reset(); generation = _generation; _reading = true; }
             if (_controller is null)
             {
-                var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(dataRoot, "WebViewProfile")).WaitAsync(token);
+                var profileFolder = webViewProfilePath?.Invoke() ?? Path.Combine(dataRoot, "WebViewProfile");
+                var environment = await CoreWebView2Environment.CreateAsync(null, profileFolder).WaitAsync(token);
                 token.ThrowIfCancellationRequested();
                 if (generation != _generation) throw new OperationCanceledException(token);
                 var options = environment.CreateCoreWebView2ControllerOptions();
                 options.ProfileName = ProfileName(credential);
-                options.IsInPrivateModeEnabled = true;
                 var pending = environment.CreateCoreWebView2ControllerAsync(new IntPtr(-3), options);
                 CoreWebView2Controller created;
                 try { created = await pending.WaitAsync(token); }
@@ -181,6 +215,12 @@ internal sealed class OfficialNoteBrowser(string dataRoot) : IDisposable
                     core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
                 }
                 catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+            }
+            if (processFailed && generation == _generation)
+            {
+                try { _controller?.Close(); }
+                catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+                _controller = null; _accountKey = null;
             }
             if (generation == _generation) _reading = false;
         }

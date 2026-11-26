@@ -8,8 +8,9 @@
   <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="LineHeight" Value="19"/><Setter Property="Margin" Value="0,5,0,0"/>
  </Style>
  <Style x:Key="SettingsCard" TargetType="Border">
-  <Setter Property="Background" Value="{DynamicResource Panel}"/><Setter Property="BorderBrush" Value="{DynamicResource Stroke}"/>
+ <Setter Property="Background" Value="{DynamicResource Panel}"/><Setter Property="BorderBrush" Value="{DynamicResource Stroke}"/>
   <Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="12"/>
+  <Setter Property="SnapsToDevicePixels" Value="True"/>
  </Style>
  <Style x:Key="SettingsDivider" TargetType="Border">
   <Setter Property="Height" Value="1"/><Setter Property="Background" Value="{DynamicResource Stroke}"/><Setter Property="Margin" Value="16,0"/>
@@ -62,6 +63,7 @@
    </Border>
    <ControlTemplate.Triggers>
     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Switch" Property="Background" Value="{DynamicResource Accent}"/><Setter TargetName="Knob" Property="Fill" Value="#171D11"/><Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/></Trigger>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="Background" Value="{DynamicResource WidgetPinkSoft}"/><Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource WindowStroke}"/></Trigger>
     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Knob" Property="Opacity" Value=".75"/></Trigger>
     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource AccentText}"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Frame" Property="Opacity" Value=".45"/></Trigger>

@@ -75,6 +75,55 @@ public static class Cookies
         };
     }
 
+    // Browser profiles can retain multiple cookies for the same account across domains,
+    // but distinct account identities in one profile must be rejected rather than mixed.
+    public static Credential CreateFromBrowserCookies(IEnumerable<(string Name, string Value)> cookies)
+    {
+        var values = cookies
+            .Where(c => Allowed.Contains(c.Name) && !string.IsNullOrWhiteSpace(c.Value))
+            .ToList();
+        if (values.Count == 0) throw new ArgumentException("官方网页中没有可用的登录凭据，请先完成登录。", nameof(cookies));
+
+        var identityNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "account_id", "account_id_v2", "ltuid", "ltuid_v2", "stuid", "stuid_v2"
+        };
+        var identities = values
+            .Where(c => identityNames.Contains(c.Name) && c.Value.All(char.IsAsciiDigit))
+            .Select(c => c.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (identities.Count == 0) throw new ArgumentException("官方网页中没有有效的账号标识，请先完成登录。", nameof(cookies));
+        if (identities.Count > 1)
+            throw new ArgumentException("官方网页中检测到多个账号的登录会话，请先点击“清除网页登录会话”后再重新登录。", nameof(cookies));
+
+        var selected = values
+            .GroupBy(c => c.Name, StringComparer.Ordinal)
+            .Select(g => g.Last())
+            .ToList();
+        return Create(string.Join("; ", selected.Select(c => c.Name + "=" + c.Value)));
+    }
+
+    // HttpClient is intentionally configured without a shared CookieContainer.
+    // Merge only allowed Set-Cookie values into the encrypted credential instead.
+    public static bool TryMergeSetCookies(Credential credential, IEnumerable<string> setCookies)
+    {
+        var parts = new List<string> { credential.Cookie };
+        foreach (var header in setCookies)
+        {
+            var first = header.Split(';', 2)[0].Trim();
+            if (first.Length > 0) parts.Add(first);
+        }
+        try
+        {
+            var merged = Create(string.Join("; ", parts));
+            if (!string.Equals(merged.AccountKey, credential.AccountKey, StringComparison.Ordinal)) return false;
+            if (!string.Equals(merged.Cookie, credential.Cookie, StringComparison.Ordinal)) credential.Cookie = merged.Cookie;
+            return true;
+        }
+        catch (ArgumentException) { return false; }
+    }
+
     public static bool IsOfficialHost(string host) =>
         host.Equals("mihoyo.com", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".mihoyo.com", StringComparison.OrdinalIgnoreCase) ||

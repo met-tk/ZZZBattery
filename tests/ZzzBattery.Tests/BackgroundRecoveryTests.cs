@@ -58,6 +58,26 @@ public sealed class BackgroundRecoveryTests
     }
 
     [Fact]
+    public async Task TransientBackgroundFailureRetriesOnceWithoutUserAction()
+    {
+        var clock = new Clock(); var account = Account(); var client = new Client(); var reads = 0;
+        Task<EnergySnapshot> Read(Credential c, CancellationToken _)
+        {
+            reads++;
+            if (reads == 1) throw new ApiFailure(FailureKind.Verification, "暂时无法读取官方便笺。");
+            return Task.FromResult(Snapshot(c, clock));
+        }
+        using var session = new WidgetSession(client, clock, Read);
+        session.SetCredential(account); await session.RefreshAsync();
+        Assert.Equal(1, reads);
+        Assert.False(session.CaptureCheckpoint()!.AutomaticRecoveryAttempted);
+
+        clock.Advance(TimeSpan.FromMinutes(1)); await session.RefreshAsync();
+        Assert.Equal(2, reads);
+        Assert.Null(session.Failure);
+    }
+
+    [Fact]
     public async Task OldVerificationCheckpointGetsOneAttemptAfterExistingCooldown()
     {
         var clock = new Clock(); var account = Account(); var client = new Client(); var reads = 0;

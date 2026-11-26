@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using QRCoder;
@@ -28,6 +29,7 @@ public partial class DailySignWindow : Window
         _session = App.Current.DailySign;
         InitializeComponent();
         AdaptiveWindow.Attach(this, 300, 340);
+        StateChanged += (_, _) => UpdateChromeState();
         SetQrImage();
         _session.Changed += SessionChanged;
         _presentationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -40,7 +42,14 @@ public partial class DailySignWindow : Window
             _session.Changed -= SessionChanged;
             QrImage.Source = null;
         };
+        UpdateChromeState();
     }
+
+    private void ChromeMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => WindowChromeActions.DragMove(this, e);
+    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeClick(object sender, RoutedEventArgs e) => WindowChromeActions.ToggleMaximize(this);
+    private void CloseWindowClick(object sender, RoutedEventArgs e) => Close();
+    private void UpdateChromeState() => WindowChromeActions.Update(this, MaximizeButton, MaximizeGlyph);
 
     private bool SameAccount() => _roleKey is not null &&
         App.Current.Session.Credential is { } current &&

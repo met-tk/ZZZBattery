@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -37,9 +38,16 @@ public partial class AccountWindow : Window
             await FitOfficialPage();
         };
         if (loadPage) Loaded += async (_, _) => await InitializeBrowser();
+        StateChanged += (_, _) => UpdateChromeState();
         Closed += (_, _) => { _closed = true; BrowserReady = false; _fitTimer.Stop(); _cancel.Cancel(); _popups.CloseAll(); Browser.Dispose(); _cancel.Dispose(); };
         CookieInput.PasswordChanged += (_, _) => ResetCandidate();
+        UpdateChromeState();
     }
+    private void ChromeMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => WindowChromeActions.DragMove(this, e);
+    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeClick(object sender, RoutedEventArgs e) => WindowChromeActions.ToggleMaximize(this);
+    private void CloseWindowClick(object sender, RoutedEventArgs e) => Close();
+    private void UpdateChromeState() => WindowChromeActions.Update(this, MaximizeButton, MaximizeGlyph);
     private void ResetCandidate() { _generation++; _candidate = null; Roles.ItemsSource = null; Roles.Visibility = Visibility.Collapsed; UseButton.IsEnabled = false; }
     private void QrLoginClick(object sender, RoutedEventArgs e)
     {
@@ -64,8 +72,10 @@ public partial class AccountWindow : Window
         {
             Browser.CreationProperties = new CoreWebView2CreationProperties
             {
-                UserDataFolder = Path.Combine(App.Current.Store.Root, "WebViewProfile"),
-                IsInPrivateModeEnabled = true
+                UserDataFolder = App.Current.Store.WebViewProfilePath,
+                // Keep the login browser separate from the account-specific
+                // profiles used by background recovery and verification.
+                ProfileName = "AccountLogin"
             };
             await Browser.EnsureCoreWebView2Async();
             if (_closed || Browser.CoreWebView2 is null) return;
@@ -148,6 +158,20 @@ public partial class AccountWindow : Window
         await InitializeBrowser();
         if (BrowserReady) Browser.CoreWebView2.Reload();
     }
+    private async void ClearSessionClick(object sender, RoutedEventArgs e)
+    {
+        await InitializeBrowser();
+        if (!BrowserReady || _closed) return;
+        try
+        {
+            Browser.CoreWebView2.CookieManager.DeleteAllCookies();
+            Browser.CoreWebView2.Navigate("about:blank");
+            ResetCandidate();
+            Status.Text = "网页登录会话已清除，请重新登录后读取游戏角色。";
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        { Status.Text = "网页登录会话清除失败，请关闭窗口后重试。"; }
+    }
     private void ImportFile(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog { Title = "选择自己的登录凭据文件", Filter = "凭据文件 (*.json;*.txt)|*.json;*.txt", CheckFileExists = true };
@@ -166,19 +190,18 @@ public partial class AccountWindow : Window
         var generation = _generation;
         try
         {
-            string cookie;
-            if (_import) cookie = CookieInput.Password;
+            Credential credential;
+            if (_import) credential = Cookies.Create(CookieInput.Password);
             else
             {
                 if (!BrowserReady) { Status.Text = "登录网页尚未就绪，请重载或使用手动导入。"; return; }
                 // Read only the isolated, user-opened login browser, never installed browser profiles.
                 var available = await Browser.CoreWebView2.CookieManager.GetCookiesAsync(null);
                 if (_closed || generation != _generation) return;
-                cookie = string.Join("; ", available
+                credential = Cookies.CreateFromBrowserCookies(available
                     .Where(c => Cookies.IsOfficialHost(c.Domain.TrimStart('.')) && Cookies.Allowed.Contains(c.Name))
-                    .GroupBy(c => c.Name).Select(g => g.Last()).Select(c => c.Name + "=" + c.Value));
+                    .Select(c => (c.Name, c.Value)));
             }
-            var credential = Cookies.Create(cookie);
             Status.Text = "正在验证登录并读取绝区零角色…";
             var roles = await App.Current.Client.GetRolesAsync(credential, _cancel.Token);
             if (_closed || generation != _generation) return;
@@ -195,6 +218,13 @@ public partial class AccountWindow : Window
         { if (!_closed) Status.Text = "读取未完成，请重载官方网页后再试。"; }
         finally { if (!_closed) { ReadButton.IsEnabled = true; Progress.Visibility = Visibility.Collapsed; } }
     }
+    internal void ClearSessionCookies()
+    {
+        if (!BrowserReady || _closed || Browser.CoreWebView2 is null) return;
+        try { Browser.CoreWebView2.CookieManager.DeleteAllCookies(); }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+    }
+
     private async void UseRole(object sender, RoutedEventArgs e)
     {
         if (_candidate is null || Roles.SelectedItem is not GameRole role) return;
@@ -205,6 +235,7 @@ public partial class AccountWindow : Window
         {
             await App.Current.Connect(_candidate);
             if (_closed) return;
+            ClearSessionCookies();
             App.Current.ShowWidget(); Close();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)

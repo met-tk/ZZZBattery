@@ -58,6 +58,10 @@ public sealed class ApiFailure(FailureKind kind, string message, int? code = nul
 public sealed record VerificationTask(string Gt, string Challenge, bool NewCaptcha, bool Online,
     string AccountKey, string RoleKey, DateTimeOffset CreatedAt, string? Trace, string Path = "/api/zzz/note");
 public sealed record VerificationAnswer(string Challenge, string Validate, string Seccode);
+// Short-lived server proof returned after a successful Geetest flow. It is
+// safe to persist only when encrypted by the platform store; it contains no
+// login cookies and expires quickly.
+public sealed record VerificationProof(string AccountKey, string RoleKey, string Value, DateTimeOffset ExpiresAt);
 
 public sealed class WidgetSettings
 {
@@ -69,6 +73,10 @@ public sealed class WidgetSettings
     public bool StartAtLogin { get; set; }
     public bool ReminderEnabled { get; set; }
     public int ReminderMinutes { get; set; } = 30;
+    public bool EnergyReminderEnabled { get; set; }
+    public int ReminderEnergy { get; set; } = 180;
+    public string ReminderSound { get; set; } = "System";
+    public string ReminderSoundPath { get; set; } = "";
     public string Theme { get; set; } = "Dark";
     public string Accent { get; set; } = "Lime";
     public bool CharacterStyle { get; set; } = true;
@@ -80,12 +88,48 @@ public sealed class WidgetSettings
     public string DeviceId { get; set; } = Guid.NewGuid().ToString();
 }
 
-public sealed class ReminderState
+public sealed record ReminderState
 {
     public string Key { get; set; } = "";
     public DateTimeOffset? FullAt { get; set; }
     public bool EarlySent { get; set; }
     public bool FullSent { get; set; }
+    public string EnergyKey { get; set; } = "";
+    public int? EnergyTarget { get; set; }
+    public bool EnergyArmed { get; set; }
+    public DateTimeOffset? EnergyFullAt { get; set; }
+
+    public string? EvaluateEnergy(EnergySnapshot snapshot, EnergyProjection projection,
+        bool healthy, int? target)
+    {
+        if (target is null || target < 1 || target > snapshot.Maximum)
+        {
+            EnergyTarget = null; EnergyArmed = false; EnergyFullAt = null;
+            return null;
+        }
+        if (!healthy || projection.Stale || projection.Inconsistent) return null;
+        var key = snapshot.AccountKey + ":" + snapshot.RoleKey;
+        var fullAt = snapshot.RestoreSeconds > 0
+            ? snapshot.ReceivedAt.AddSeconds(snapshot.RestoreSeconds.Value) : (DateTimeOffset?)null;
+        if (EnergyKey != key || EnergyTarget != target)
+        {
+            EnergyKey = key; EnergyTarget = target;
+            // Enabling a rule when its target is already reached is not a crossing.
+            EnergyArmed = projection.Current < target;
+            EnergyFullAt = fullAt;
+            return null;
+        }
+        if (projection.Current < target)
+        {
+            // A small server-time correction below the target is not another consumption cycle.
+            if (!EnergyFullAt.HasValue || fullAt > EnergyFullAt.Value.AddSeconds(120)) EnergyArmed = true;
+            if (EnergyArmed) EnergyFullAt = fullAt;
+            return null;
+        }
+        if (!EnergyArmed) return null;
+        EnergyArmed = false;
+        return $"电量已达到 {target}，当前{(projection.Estimated ? "预计" : "")}为 {projection.Current}/{projection.Maximum}，可以安排上线了。";
+    }
 
     public string? Evaluate(EnergySnapshot snapshot, EnergyProjection projection,
         DateTimeOffset now, bool healthy, int earlyMinutes)

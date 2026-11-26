@@ -20,6 +20,10 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
     public const string WidgetAppVersion = "2.115.0";
     private readonly Dictionary<string, (IReadOnlyList<GameRole> Roles, DateTimeOffset At)> _roles = new();
     private readonly Dictionary<string, DateTimeOffset> _widgetBackoff = new();
+    // The Windows host persists changed cookies and may provide a silent WebView
+    // refresh. Both hooks are optional so Core remains usable in headless tests.
+    public event Action<Credential>? CredentialChanged;
+    public Func<Credential, CancellationToken, Task<bool>>? CredentialRecovery { get; set; }
     public const string DsSalt = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs";
 
     public static string Query(IEnumerable<KeyValuePair<string, string>> fields) =>
@@ -38,33 +42,53 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
         var token = deadline.Token;
-        using var request = new HttpRequestMessage(requestBody is null ? HttpMethod.Get : HttpMethod.Post, endpoint + (query.Length > 0 ? "?" + query : ""));
-        if (requestBody is not null) request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-        if (credential.Cookie.Length > 0) request.Headers.Add("Cookie", credential.Cookie);
-        request.Headers.Add("DS", Sign(query, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), RandomNumberGenerator.GetInt32(100001, 200001), requestBody ?? ""));
-        // The widget server gates activity_list by the app version, even when the
-        // older profile otherwise returns retcode 0 and valid daily-state fields.
-        request.Headers.Add("x-rpc-app_version", endpoint == WidgetEndpoint ? WidgetAppVersion : "2.11.1");
-        request.Headers.Add("x-rpc-client_type", "5");
-        request.Headers.Add("x-rpc-device_id", deviceId);
-        request.Headers.Add("x-rpc-language", "zh-cn");
-        request.Headers.Add("x-rpc-platform", "4");
-        request.Headers.Referrer = new Uri(endpoint.Contains("game_record_zzz", StringComparison.OrdinalIgnoreCase) || endpoint.Contains("toolcomsrv", StringComparison.OrdinalIgnoreCase)
-            ? "https://act.mihoyo.com/app/mihoyo-zzz-game-record/m.html"
-            : "https://webstatic.mihoyo.com/");
-        request.Headers.Add("Origin", "https://act.mihoyo.com");
-        request.Headers.UserAgent.ParseAdd(endpoint == WidgetEndpoint ? $"Mozilla/5.0 miHoYoBBS/{WidgetAppVersion}" :
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36");
-        request.Headers.Accept.ParseAdd("application/json");
-        if (extraHeaders is not null)
-            foreach (var header in extraHeaders)
-            {
-                request.Headers.Remove(header.Key);
-                request.Headers.Add(header.Key, header.Value);
-            }
+        var recoveryAttempted = false;
+        var credentialUpdated = false;
         try
         {
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        while (true)
+        {
+            using var request = new HttpRequestMessage(requestBody is null ? HttpMethod.Get : HttpMethod.Post, endpoint + (query.Length > 0 ? "?" + query : ""));
+            if (requestBody is not null) request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+            if (credential.Cookie.Length > 0) request.Headers.Add("Cookie", credential.Cookie);
+            request.Headers.Add("DS", Sign(query, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), RandomNumberGenerator.GetInt32(100001, 200001), requestBody ?? ""));
+            // The widget server gates activity_list by the app version, even when the
+            // older profile otherwise returns retcode 0 and valid daily-state fields.
+            request.Headers.Add("x-rpc-app_version", endpoint == WidgetEndpoint ? WidgetAppVersion : "2.11.1");
+            request.Headers.Add("x-rpc-client_type", "5");
+            request.Headers.Add("x-rpc-device_id", deviceId);
+            request.Headers.Add("x-rpc-language", "zh-cn");
+            request.Headers.Add("x-rpc-platform", "4");
+            request.Headers.Referrer = new Uri(endpoint.Contains("game_record_zzz", StringComparison.OrdinalIgnoreCase) || endpoint.Contains("toolcomsrv", StringComparison.OrdinalIgnoreCase)
+                ? "https://act.mihoyo.com/app/mihoyo-zzz-game-record/m.html" : "https://webstatic.mihoyo.com/");
+            request.Headers.Add("Origin", "https://act.mihoyo.com");
+            request.Headers.UserAgent.ParseAdd(endpoint == WidgetEndpoint ? $"Mozilla/5.0 miHoYoBBS/{WidgetAppVersion}" :
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36");
+            request.Headers.Accept.ParseAdd("application/json");
+            if (extraHeaders is not null)
+                foreach (var header in extraHeaders)
+                {
+                    request.Headers.Remove(header.Key);
+                    request.Headers.Add(header.Key, header.Value);
+                }
+                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden &&
+                !recoveryAttempted && CredentialRecovery is { } recover)
+            {
+                recoveryAttempted = true;
+                var beforeRecover = credential.Cookie;
+                bool recovered = false;
+                try { recovered = await recover(credential, token); }
+                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { }
+                catch (Exception error) when (error is ApiFailure or IOException or InvalidOperationException)
+                { }
+                if (recovered)
+                {
+                    if (!string.Equals(beforeRecover, credential.Cookie, StringComparison.Ordinal))
+                        credentialUpdated = true;
+                    continue;
+                }
+            }
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 var delay = response.Headers.RetryAfter?.Delta ??
@@ -77,6 +101,19 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
                 throw new ApiFailure(FailureKind.Network, $"服务暂不可用（HTTP {(int)response.StatusCode}）。");
             if (response.Content.Headers.ContentLength > 2_000_000)
                 throw new ApiFailure(FailureKind.Protocol, "服务器响应过大，请稍后重试。");
+            if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+            {
+                var before = credential.Cookie;
+                if (Cookies.TryMergeSetCookies(credential, setCookies) &&
+                    !string.Equals(before, credential.Cookie, StringComparison.Ordinal))
+                    credentialUpdated = true;
+            }
+            if (credentialUpdated)
+            {
+                credentialUpdated = false;
+                try { CredentialChanged?.Invoke(credential); }
+                catch { /* Persistence failure must not turn a successful request into an error. */ }
+            }
             await using var stream = await response.Content.ReadAsStreamAsync(token);
             using var body = new MemoryStream();
             var buffer = new byte[8192];
@@ -110,7 +147,8 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
             if (verificationEnvelope) return root.Clone();
             if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
                 throw new ApiFailure(FailureKind.Protocol, "接口没有返回有效数据。");
-            return data.Clone();
+                return data.Clone();
+            }
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         { throw new ApiFailure(FailureKind.Network, "连接超时，将保留上次数据并稍后重试。"); }

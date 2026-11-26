@@ -156,6 +156,11 @@ internal static class Palette
         Set("Ink", light ? "#171B14" : "#F4F5EB");
         Set("Muted", light ? "#5F6758" : "#A3AAA0");
         Set("Stroke", light ? "#CDD2C4" : "#383D37");
+        Set("WindowSurface", light ? "#E6E9DF" : "#151719");
+        Set("WindowSurfaceRaised", light ? "#FAFBF6" : "#202224");
+        Set("WindowStroke", light ? "#C7CDBD" : "#493540");
+        Set("WidgetPink", light ? "#C9497E" : "#EE73A4");
+        Set("WidgetPinkSoft", light ? "#F7DCE7" : "#4A2738");
         Set("Accent", settings.Accent == "Yellow" ? "#F3D95A" : "#D6EF69");
         Set("AccentText", light ? (settings.Accent == "Yellow" ? "#756015" : "#526518") : (settings.Accent == "Yellow" ? "#F3D95A" : "#D6EF69"));
         Set("Warning", light ? "#8A4A00" : "#FFD17C");

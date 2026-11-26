@@ -76,13 +76,15 @@ internal static class UiSmokeCheck
             verification.Show(); verification.ShowFailureForCheck(); verification.UpdateLayout();
             Capture(verification, app, "verification-unavailable"); verification.Close();
             await CheckSettings(app);
+            ReminderSmokeCheck.Run(app);
             await CheckDailySign(app, window);
             await CheckVerificationRecovery(app);
             File.WriteAllText(Path.Combine(app.Store.Root, "ui-smoke-result.json"), JsonSerializer.Serialize(new
             { passed = true, states = true, pagination = true, details = true, filters = true, dpi = new[] { 100, 150, 200 }, stale = true, shortScreen = true, qrLogin = true,
                 slimScrollbar = true, thumbDrag = true, mouseWheel = true, verificationFailurePanel = true,
                 dailySign = new { headerLayout = true, states = true, clickDispatch = true, signedDisabled = true, officialQr = true, accountIsolation = true, noSubmission = true },
-                settings = new { navigation = true, modes = true, toggles = true, persistence = true, themedDropdown = true, reminderDependency = true, shortWindow = true },
+                settings = new { navigation = true, modes = true, toggles = true, persistence = true, themedDropdown = true, reminderDependency = true, energyTarget = true, soundModes = true, shortWindow = true },
+                reminders = new { nativeNotification = true, trayCallbacks = true, wavPlayback = true, invalidSound = true },
                 recovery = new { capturedNote = true, wrongRoleRejected = true, malformedResponseRejected = true, staleCacheRejected = true, ordinarySyncClosesWindow = true, automaticClose = true, webViewResponsePipeline = true } }));
         }
         catch (Exception error)
@@ -179,6 +181,7 @@ internal static class UiSmokeCheck
         app.Settings.Theme = "Dark"; app.Settings.Accent = "Lime";
         app.Settings.Topmost = false; app.Settings.Locked = false; app.Settings.ClickThrough = false;
         app.Settings.ReminderEnabled = false;
+        app.Settings.EnergyReminderEnabled = false; app.Settings.ReminderSound = "System";
         app.Settings.GameExecutable = @"C:\Games\HoYoPlay\games\ZenlessZoneZero\launcher.exe";
         Palette.Apply(app.Settings);
         var settings = new SettingsWindow(); settings.Show(); await Task.Delay(100);
@@ -221,6 +224,32 @@ internal static class UiSmokeCheck
         minutes.SelectedValue = "15";
         Toggle("ReminderBox"); Assert(!minutes.IsEnabled && app.Settings.ReminderMinutes == 15, "Disabling reminders lost the time.");
         Toggle("ReminderBox"); await Task.Delay(100); Capture(settings, app, "settings-reminders");
+        var energy = Control<TextBox>("EnergyTargetBox");
+        Assert(!energy.IsEnabled, "Energy input should start disabled.");
+        Toggle("EnergyReminderBox"); Assert(energy.IsEnabled, "Energy input did not enable.");
+        energy.Text = "200"; Assert(app.Settings.ReminderEnergy == 200, "Target was not applied.");
+        foreach (var invalid in new[] { "", "0", "241", "abc", "-1" })
+        {
+            energy.Text = invalid;
+            Assert(app.Settings.ReminderEnergy == 200, "Invalid target was saved.");
+            Assert(Control<TextBlock>("Status").Text.Contains("1～240"), "Invalid target has no explanation.");
+        }
+        energy.Text = "200";
+        Toggle("EnergyReminderBox"); Assert(!energy.IsEnabled && app.Settings.ReminderEnergy == 200, "Disabling lost the target.");
+        Toggle("EnergyReminderBox");
+        var sound = Control<ComboBox>("SoundBox");
+        sound.SelectedValue = "Silent";
+        Assert(!Control<Button>("PreviewSoundButton").IsEnabled && app.Settings.ReminderSound == "Silent", "Silent mode did not apply.");
+        sound.SelectedValue = "Custom";
+        Assert(Control<StackPanel>("CustomSoundPanel").IsVisible && Control<Button>("PreviewSoundButton").IsEnabled, "Custom sound controls missing.");
+        Control<Button>("PreviewSoundButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert(Control<TextBlock>("Status").Text.Contains("无法播放"), "Missing sound was not explained.");
+        await Task.Delay(50); Capture(settings, app, "settings-reminders-custom");
+        Capture(settings, app, "settings-reminders-custom-200", 2);
+        scroll.ScrollToBottom(); await Task.Delay(50); Capture(settings, app, "settings-reminders-bottom");
+        app.Settings.Theme = "Light"; Palette.Apply(app.Settings); scroll.ScrollToTop();
+        await Task.Delay(50); Capture(settings, app, "settings-reminders-light");
+        app.Settings.Theme = "Dark"; Palette.Apply(app.Settings);
         Select("AccountTab"); await Task.Delay(100); Capture(settings, app, "settings-account");
         Assert(!Control<Button>("SignOutButton").IsEnabled, "Signed-out account allows sign-out.");
         settings.Width = 440; settings.Height = 480; Select("DesktopTab"); settings.UpdateLayout();
@@ -230,6 +259,8 @@ internal static class UiSmokeCheck
         var done = Control<Button>("DoneButton");
         Assert(done.TranslatePoint(new Point(0, done.ActualHeight), settings).Y <= settings.ActualHeight, "Fixed footer was clipped.");
         Capture(settings, app, "settings-short-desktop");
+        Select("ReminderTab"); await Task.Delay(50); Capture(settings, app, "settings-short-reminders");
+        scroll.ScrollToBottom(); await Task.Delay(50); Capture(settings, app, "settings-short-reminders-bottom");
         Select("AppearanceTab"); await Task.Delay(50);
         Assert(scroll.VerticalOffset == 0, "Page switch did not reset scrolling.");
         Capture(settings, app, "settings-short-appearance");
@@ -237,8 +268,10 @@ internal static class UiSmokeCheck
         settings.Close();
         var saved = app.Store.Read<WidgetSettings>("settings.json");
         Assert(saved is { CharacterStyle: true, Mini: false, Locked: true, Topmost: false, ClickThrough: false, ReminderEnabled: true, ReminderMinutes: 15, Theme: "Dark", Accent: "Lime" }, "Settings did not persist.");
+        Assert(saved is { EnergyReminderEnabled: true, ReminderEnergy: 200, ReminderSound: "Custom" }, "Reminder settings did not persist.");
         settings = new SettingsWindow(); settings.Show(); await Task.Delay(50);
         Assert(Control<RadioButton>("CharacterMode").IsChecked == true && Control<CheckBox>("LockedBox").IsChecked == true && Control<ComboBox>("MinutesBox").SelectedValue?.ToString() == "15", "Reopening lost saved selections.");
+        Assert(Control<CheckBox>("EnergyReminderBox").IsChecked == true && Control<TextBox>("EnergyTargetBox").Text == "200" && Control<ComboBox>("SoundBox").SelectedValue?.ToString() == "Custom", "Reopening lost reminder selections.");
         settings.Close();
     }
     private static void AssertText(FrameworkElement control, string name, string expected)

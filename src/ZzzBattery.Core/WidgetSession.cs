@@ -117,6 +117,11 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
         _failures = checkpoint.ConsecutiveFailures;
         _preferOfficialPage |= checkpoint.PreferOfficialPage;
         _automaticRecoveryAttempted = checkpoint.AutomaticRecoveryAttempted;
+        // A crash during a hidden browser read has no verification code. Let the
+        // next process retry once; explicit challenge checkpoints remain paused.
+        if (_automaticRecoveryAttempted && checkpoint.FailureKind == FailureKind.Verification &&
+            checkpoint.FailureCode is null)
+            _automaticRecoveryAttempted = false;
         if (checkpoint.FailureKind is { } failureKind)
         {
             var known = checkpoint.FailureCode is { } code ? MiyousheClient.FromRetcode(code) : null;
@@ -270,6 +275,14 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             var minutes = new[] { 1, 2, 5, 15 }[Math.Min(_failures - 1, 3)];
             if (error.NeedsUser) minutes = 15;
             var delay = error.RetryAfter ?? TimeSpan.FromMinutes(minutes);
+            // A hidden WebView can fail transiently without receiving a verification code.
+            // Retry that first failure once; explicit challenge responses still pause for the user.
+            if (error.Kind == FailureKind.Verification && error.Code is null &&
+                _automaticRecoveryAttempted && _failures == 1)
+            {
+                _automaticRecoveryAttempted = false;
+                delay = TimeSpan.FromMinutes(1);
+            }
             if (delay < TimeSpan.FromSeconds(60)) delay = TimeSpan.FromSeconds(60);
             if (delay > TimeSpan.FromHours(24)) delay = TimeSpan.FromHours(24);
             Schedule(delay);

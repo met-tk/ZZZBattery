@@ -1,8 +1,12 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Media;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
+using Microsoft.Win32;
 using ZzzBattery.Core;
 
 namespace ZzzBattery.Windows;
@@ -11,15 +15,41 @@ public partial class SettingsWindow : Window
 {
     private const string AuthorUrl = "https://space.bilibili.com/24340298";
     private bool _ready;
+    private readonly ReminderSoundPlayer _previewSound = new();
     public SettingsWindow()
     {
         InitializeComponent();
         AdaptiveWindow.Attach(this, 380, 300);
-        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.3.0");
+        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.4.2");
         RefreshSettings();
         AppearanceTab.IsChecked = true;
         Activated += (_, _) => RefreshSettings();
+        StateChanged += (_, _) => UpdateChromeState();
+        Closed += (_, _) => _previewSound.Dispose();
         KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) Close(); };
+        UpdateChromeState();
+    }
+
+    private void ChromeMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2 && ResizeMode == ResizeMode.CanResize)
+        {
+            ToggleMaximize(); e.Handled = true; return;
+        }
+        if (e.LeftButton != MouseButtonState.Pressed) return;
+        try { DragMove(); } catch (InvalidOperationException) { }
+    }
+
+    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeClick(object sender, RoutedEventArgs e) => ToggleMaximize();
+    private void CloseWindowClick(object sender, RoutedEventArgs e) => Close();
+    private void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    private void UpdateChromeState()
+    {
+        if (MaximizeGlyph is null) return;
+        MaximizeGlyph.Text = WindowState == WindowState.Maximized ? "❐" : "□";
+        MaximizeButton.ToolTip = WindowState == WindowState.Maximized ? "还原" : "最大化";
+        AutomationProperties.SetName(MaximizeButton, WindowState == WindowState.Maximized ? "还原" : "最大化");
     }
 
     private void RefreshSettings()
@@ -34,6 +64,10 @@ public partial class SettingsWindow : Window
         ThroughBox.IsChecked = settings.ClickThrough; StartupBox.IsChecked = settings.StartAtLogin;
         ReminderBox.IsChecked = settings.ReminderEnabled;
         MinutesBox.SelectedValue = settings.ReminderMinutes.ToString();
+        EnergyReminderBox.IsChecked = settings.EnergyReminderEnabled;
+        EnergyTargetBox.Text = settings.ReminderEnergy.ToString();
+        SoundBox.SelectedValue = settings.ReminderSound;
+        RefreshSound();
         WallpaperName.Text = App.Current.Wallpapers.Resolve(settings.Wallpaper).Name;
         GamePathText.Text = string.IsNullOrWhiteSpace(settings.GameExecutable) ? "尚未设置" : Path.GetFileName(settings.GameExecutable);
         GamePathText.ToolTip = string.IsNullOrWhiteSpace(settings.GameExecutable) ? null : settings.GameExecutable;
@@ -77,8 +111,77 @@ public partial class SettingsWindow : Window
         settings.Topmost = TopmostBox.IsChecked == true;
         settings.Locked = LockedBox.IsChecked == true; settings.ClickThrough = ThroughBox.IsChecked == true;
         settings.ReminderEnabled = ReminderBox.IsChecked == true;
+        settings.EnergyReminderEnabled = EnergyReminderBox.IsChecked == true;
         if (int.TryParse(MinutesBox.SelectedValue?.ToString(), out var minutes)) settings.ReminderMinutes = minutes;
         Save();
+    }
+
+    private void EnergyTargetChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_ready) return;
+        if (!int.TryParse(EnergyTargetBox.Text, out var target) || target is < 1 or > 240)
+        { SetStatus("请输入 1～240 的整数电量；当前输入尚未保存。", true); return; }
+        if (App.Current.Settings.ReminderEnergy == target) return;
+        App.Current.Settings.ReminderEnergy = target;
+        Save();
+    }
+
+    private void EnergyTargetLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (int.TryParse(EnergyTargetBox.Text, out var target) && target is >= 1 and <= 240) return;
+        _ready = false; EnergyTargetBox.Text = App.Current.Settings.ReminderEnergy.ToString(); _ready = true;
+        SetStatus("电量范围为 1～240，已恢复为上次保存的值。", true);
+    }
+
+    private void RefreshSound()
+    {
+        var settings = App.Current.Settings;
+        CustomSoundPanel.Visibility = settings.ReminderSound == "Custom" ? Visibility.Visible : Visibility.Collapsed;
+        SoundPathText.Text = string.IsNullOrWhiteSpace(settings.ReminderSoundPath) ? "尚未选择提示音" : Path.GetFileName(settings.ReminderSoundPath);
+        SoundPathText.ToolTip = settings.ReminderSoundPath;
+        PreviewSoundButton.IsEnabled = settings.ReminderSound != "Silent";
+    }
+
+    private void SoundChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_ready) return;
+        _previewSound.Stop();
+        App.Current.Settings.ReminderSound = SoundBox.SelectedValue?.ToString() ?? "System";
+        RefreshSound(); Save();
+        if (App.Current.Settings.ReminderSound == "Custom" && string.IsNullOrWhiteSpace(App.Current.Settings.ReminderSoundPath))
+            SetStatus("请选择 WAV 文件；选择前将使用系统声音。");
+    }
+
+    private void ChooseSoundClick(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFileDialog { Title = "选择电量提醒提示音", Filter = "WAV 提示音 (*.wav)|*.wav", CheckFileExists = true };
+        if (picker.ShowDialog(this) != true) return;
+        try
+        {
+            using var sound = ReminderSoundPlayer.Load(picker.FileName);
+            App.Current.Settings.ReminderSoundPath = picker.FileName;
+            RefreshSound(); Save();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or TimeoutException)
+        { SetStatus("无法读取此提示音，请选择不超过 10 MB 的 PCM WAV 文件。", true); }
+    }
+
+    private void PreviewSoundClick(object sender, RoutedEventArgs e)
+    {
+        _previewSound.Stop();
+        var settings = App.Current.Settings;
+        if (settings.ReminderSound == "Silent") return;
+        if (settings.ReminderSound == "Custom" && !_previewSound.TryPlay(settings.ReminderSoundPath))
+        { SetStatus("提示音无法播放，请重新选择有效的 PCM WAV 文件。", true); return; }
+        if (settings.ReminderSound == "System") SystemSounds.Exclamation.Play();
+        SetStatus("正在试听；关闭设置窗口可停止自定义声音。");
+    }
+
+    private void TestReminderClick(object sender, RoutedEventArgs e)
+    {
+        _previewSound.Stop();
+        var sent = App.Current.ShowReminder("这是一条测试通知，正式提醒将使用当前选择的提示音。");
+        SetStatus(sent ? "测试通知已发送；若未显示，请检查 Windows 通知和勿扰设置。" : "通知未能发送，请稍后重试。", !sent);
     }
 
     private void Save()

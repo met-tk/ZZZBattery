@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -48,6 +49,7 @@ public partial class VerificationWindow : Window
         _popups = new OfficialPopupHost(this, text => { if (!_closed) Status.Text = text; });
         PageViewport.SizeChanged += (_, _) => FitBrowserViewport();
         AdaptiveWindow.Attach(this, 420, 440);
+        StateChanged += (_, _) => UpdateChromeState();
         if (loadPage) Loaded += async (_, _) => await InitializeAndLoad();
         App.Current.Session.Changed += SessionChanged;
         Closed += (_, _) =>
@@ -61,6 +63,20 @@ public partial class VerificationWindow : Window
             _popups.CloseAll();
             ChallengeBrowser.Dispose();
         };
+        UpdateChromeState();
+    }
+
+    private void ChromeMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => WindowChromeActions.DragMove(this, e);
+    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeClick(object sender, RoutedEventArgs e) => WindowChromeActions.ToggleMaximize(this);
+    private void CloseWindowClick(object sender, RoutedEventArgs e) => Close();
+    private void UpdateChromeState() => WindowChromeActions.Update(this, MaximizeButton, MaximizeGlyph);
+
+    internal void ClearSessionCookies()
+    {
+        if (!_browserReady || _closed || ChallengeBrowser.CoreWebView2 is null) return;
+        try { ChallengeBrowser.CoreWebView2.CookieManager.DeleteAllCookies(); }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
     }
 
     private bool SameAccount() => App.Current.Session.Credential is { } current &&
@@ -94,9 +110,8 @@ public partial class VerificationWindow : Window
         {
             ChallengeBrowser.CreationProperties = new CoreWebView2CreationProperties
             {
-                UserDataFolder = Path.Combine(App.Current.Store.Root, "WebViewProfile"),
-                ProfileName = OfficialNoteBrowser.ProfileName(_credential),
-                IsInPrivateModeEnabled = true
+                UserDataFolder = App.Current.Store.WebViewProfilePath,
+                ProfileName = OfficialNoteBrowser.ProfileName(_credential)
             };
             await ChallengeBrowser.EnsureCoreWebView2Async().WaitAsync(TimeSpan.FromSeconds(20), _cancel.Token);
             if (_closed || ChallengeBrowser.CoreWebView2 is null) return;

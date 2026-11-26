@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -39,8 +40,32 @@ public partial class WallpaperWindow : Window
         _ready = true;
         SetCatalog(_service.Catalog.Current);
         if (loadCatalog) Loaded += async (_, _) => await RefreshCatalog(false);
+        StateChanged += (_, _) => UpdateChromeState();
         Closed += (_, _) => { _closed.Cancel(); _previewVersion++; };
         KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
+        UpdateChromeState();
+    }
+
+    private void ChromeMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2 && ResizeMode == ResizeMode.CanResize)
+        {
+            ToggleMaximize(); e.Handled = true; return;
+        }
+        if (e.LeftButton != MouseButtonState.Pressed) return;
+        try { DragMove(); } catch (InvalidOperationException) { }
+    }
+
+    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeClick(object sender, RoutedEventArgs e) => ToggleMaximize();
+    private void CloseWindowClick(object sender, RoutedEventArgs e) => Close();
+    private void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    private void UpdateChromeState()
+    {
+        if (MaximizeGlyph is null) return;
+        MaximizeGlyph.Text = WindowState == WindowState.Maximized ? "❐" : "□";
+        MaximizeButton.ToolTip = WindowState == WindowState.Maximized ? "还原" : "最大化";
+        AutomationProperties.SetName(MaximizeButton, WindowState == WindowState.Maximized ? "还原" : "最大化");
     }
 
     private void GalleryLayoutSized(object sender, SizeChangedEventArgs e) => AdaptGallery();

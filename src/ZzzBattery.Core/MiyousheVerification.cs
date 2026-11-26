@@ -49,6 +49,7 @@ public sealed partial class MiyousheClient
     private const string VerificationAppKey = "game_record_zzz";
     private readonly ConcurrentDictionary<string, (string Value, DateTimeOffset Expires)> _verification = new();
     private readonly ConcurrentDictionary<string, long> _challengeAttempts = new();
+    public event Action<VerificationProof?>? VerificationProofChanged;
 
     private static string VerificationKey(Credential credential, GameRole role) => credential.AccountKey + ":" + role.Key;
     private IReadOnlyDictionary<string, string>? VerificationHeaders(Credential credential, GameRole role)
@@ -57,18 +58,32 @@ public sealed partial class MiyousheClient
         if (_verification.TryGetValue(key, out var proof))
         {
             if (proof.Expires > DateTimeOffset.UtcNow) return new Dictionary<string, string> { ["x-rpc-challenge"] = proof.Value };
-            _verification.TryRemove(key, out _);
+            if (_verification.TryRemove(key, out _)) VerificationProofChanged?.Invoke(null);
         }
         return null;
     }
-    public void ForgetVerification() => _verification.Clear();
+    public void ForgetVerification()
+    {
+        _verification.Clear();
+        VerificationProofChanged?.Invoke(null);
+    }
     public void SetVerificationProof(Credential credential, GameRole role, string challenge, TimeSpan? lifetime = null)
     {
-        if (IsSafeVerificationValue(challenge))
-            _verification[VerificationKey(credential, role)] = (challenge, DateTimeOffset.UtcNow + (lifetime ?? TimeSpan.FromMinutes(30)));
+        if (!IsSafeVerificationValue(challenge)) return;
+        var expiresAt = DateTimeOffset.UtcNow + (lifetime ?? TimeSpan.FromMinutes(30));
+        _verification[VerificationKey(credential, role)] = (challenge, expiresAt);
+        VerificationProofChanged?.Invoke(new(credential.AccountKey, role.Key, challenge, expiresAt));
     }
-    public void ClearVerificationProof(Credential credential, GameRole role) =>
-        _verification.TryRemove(VerificationKey(credential, role), out _);
+    public void RestoreVerificationProof(VerificationProof proof)
+    {
+        if (!IsSafeVerificationValue(proof.Value) || proof.ExpiresAt <= DateTimeOffset.UtcNow ||
+            string.IsNullOrWhiteSpace(proof.AccountKey) || string.IsNullOrWhiteSpace(proof.RoleKey)) return;
+        _verification[proof.AccountKey + ":" + proof.RoleKey] = (proof.Value, proof.ExpiresAt);
+    }
+    public void ClearVerificationProof(Credential credential, GameRole role)
+    {
+        if (_verification.TryRemove(VerificationKey(credential, role), out _)) VerificationProofChanged?.Invoke(null);
+    }
     public static bool IsSafeVerificationValue(string? value, int limit = 2048) =>
         !string.IsNullOrWhiteSpace(value) && value.Length <= limit && value.All(c => c >= 33 && c <= 126);
     private static Dictionary<string, string> RiskHeaders(string? trace, string? path = null)
@@ -132,7 +147,6 @@ public sealed partial class MiyousheClient
         var proof = JsonValue.String(JsonValue.Object(envelope, "data"), "challenge");
         if (proof.Length == 0) proof = JsonValue.String(envelope, "challenge");
         if (!IsSafeVerificationValue(proof)) throw new ApiFailure(FailureKind.Protocol, "服务端尚未确认验证通过，请重新验证。");
-        // The result is short-lived and stays in memory; never include it in settings or logs.
-        _verification[VerificationKey(credential, credential.Role)] = (proof, DateTimeOffset.UtcNow.AddMinutes(30));
+        SetVerificationProof(credential, credential.Role, proof);
     }
 }

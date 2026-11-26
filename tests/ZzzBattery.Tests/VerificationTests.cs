@@ -166,6 +166,37 @@ public sealed class VerificationTests
     }
 
     [Fact]
+    public async Task RestoredVerificationProofIsSentForTheSameAccountAndRole()
+    {
+        using var http = new HttpClient(new Handler(request =>
+        {
+            Assert.Equal("restored-proof", request.Headers.GetValues("x-rpc-challenge").Single());
+            return Task.FromResult(Json(NoteJson));
+        }));
+        var client = new MiyousheClient(http, "device");
+        var account = Account();
+        client.RestoreVerificationProof(new VerificationProof(account.AccountKey, account.Role!.Key,
+            "restored-proof", DateTimeOffset.UtcNow.AddMinutes(5)));
+        var snapshot = await client.GetNoteAsync(account, account.Role);
+        Assert.Equal(200, snapshot.Current);
+    }
+
+    [Fact]
+    public void VerificationProofChangesCanBePersistedWithoutExposingCookies()
+    {
+        var client = new MiyousheClient(new HttpClient(), "device");
+        var account = Account();
+        VerificationProof? observed = null;
+        client.VerificationProofChanged += proof => observed = proof;
+        client.SetVerificationProof(account, account.Role!, "event-proof");
+        Assert.Equal("event-proof", observed?.Value);
+        Assert.Equal(account.AccountKey, observed?.AccountKey);
+        Assert.DoesNotContain("cookie_token", observed?.Value ?? "", StringComparison.OrdinalIgnoreCase);
+        client.ForgetVerification();
+        Assert.Null(observed);
+    }
+
+    [Fact]
     public async Task NoteQueryIncludesPageAndRefererHeaders()
     {
         using var http = new HttpClient(new Handler(request =>

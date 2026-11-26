@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using QRCoder;
 using ZzzBattery.Core;
@@ -22,6 +23,7 @@ public partial class QrLoginWindow : Window
     {
         InitializeComponent();
         AdaptiveWindow.Attach(this, 320, 340);
+        StateChanged += (_, _) => UpdateChromeState();
         Loaded += async (_, _) =>
         {
             if (preview)
@@ -32,7 +34,14 @@ public partial class QrLoginWindow : Window
             else await RunLoginAsync();
         };
         Closed += (_, _) => { _closed = true; _active?.Cancel(); QrImage.Source = null; };
+        UpdateChromeState();
     }
+
+    private void ChromeMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => WindowChromeActions.DragMove(this, e);
+    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void MaximizeClick(object sender, RoutedEventArgs e) => WindowChromeActions.ToggleMaximize(this);
+    private void CloseWindowClick(object sender, RoutedEventArgs e) => Close();
+    private void UpdateChromeState() => WindowChromeActions.Update(this, MaximizeButton, MaximizeGlyph);
     private void SetQrImage(string url)
     {
         using var data = QRCodeGenerator.GenerateQrCode(url, QRCodeGenerator.ECCLevel.M);

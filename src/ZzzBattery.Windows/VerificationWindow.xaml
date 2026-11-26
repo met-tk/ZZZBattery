@@ -2,9 +2,16 @@
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:wv="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
- Title="电量查询验证 — 绝区零桌面电量" Style="{StaticResource {x:Type Window}}"
+ xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+ Title="电量查询验证 — 绝区零桌面电量" Style="{StaticResource {x:Type Window}}" WindowStyle="None" AllowsTransparency="True"
  Width="620" Height="680" MinWidth="480" MinHeight="520" WindowStartupLocation="CenterScreen">
- <Grid Margin="20">
+ <shell:WindowChrome.WindowChrome><shell:WindowChrome CaptionHeight="48" ResizeBorderThickness="6" CornerRadius="18" GlassFrameThickness="0" UseAeroCaptionButtons="False"/></shell:WindowChrome.WindowChrome>
+ <Grid Background="{DynamicResource WindowSurface}">
+  <Border Margin="10" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource WindowStroke}" BorderThickness="1" CornerRadius="18">
+  <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition/></Grid.RowDefinitions>
+  <Border Grid.Row="0" Margin="10,8,10,0" Background="{DynamicResource WindowSurfaceRaised}" BorderBrush="{DynamicResource WindowStroke}" BorderThickness="1" CornerRadius="12"><Grid x:Name="ChromeBar" MouseLeftButtonDown="ChromeMouseLeftButtonDown" shell:WindowChrome.IsHitTestVisibleInChrome="True"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0"><Border Width="26" Height="26" CornerRadius="8" Background="{DynamicResource WidgetPinkSoft}" BorderBrush="{DynamicResource WidgetPink}" BorderThickness="1"><TextBlock Text="!" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource WidgetPink}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><StackPanel Margin="10,0,0,0"><TextBlock Text="恢复电量同步" FontSize="13" FontWeight="SemiBold"/><TextBlock Text="绝区零桌面电量  ·  官方验证" FontSize="10" Foreground="{DynamicResource Muted}" Margin="0,1,0,0"/></StackPanel></StackPanel><StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,7,0"><Button Style="{StaticResource WindowChromeButton}" Click="MinimizeClick" ToolTip="最小化" AutomationProperties.Name="最小化"><TextBlock Text="—" FontSize="16"/></Button><Button x:Name="MaximizeButton" Style="{StaticResource WindowChromeButton}" Click="MaximizeClick" ToolTip="最大化" AutomationProperties.Name="最大化"><TextBlock x:Name="MaximizeGlyph" Text="□" FontSize="14"/></Button><Button Style="{StaticResource WindowChromeCloseButton}" Click="CloseWindowClick" ToolTip="关闭" AutomationProperties.Name="关闭"><TextBlock Text="×" FontSize="20" FontWeight="Light"/></Button></StackPanel></Grid></Border>
+  <Grid Grid.Row="1" Margin="20">
   <Grid.RowDefinitions>
    <RowDefinition Height="Auto"/>
    <RowDefinition Height="*"/>
@@ -15,7 +22,7 @@
    <TextBlock x:Name="TitleText" Text="恢复电量同步" FontSize="22" FontWeight="SemiBold"/>
    <TextBlock x:Name="DescText" Text="验证码只会在官方要求时出现。若已看到电量，无需寻找验证码；程序会尝试同步所选角色的数据。若页面要求登录，请在这里登录。" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0"/>
   </StackPanel>
-  <Border x:Name="PageViewport" Grid.Row="1" Background="{DynamicResource Surface}" CornerRadius="8" ClipToBounds="True">
+  <Border x:Name="PageViewport" Grid.Row="1" Background="{DynamicResource WindowSurfaceRaised}" BorderBrush="{DynamicResource WindowStroke}" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
    <Grid>
     <wv:WebView2 x:Name="ChallengeBrowser" Visibility="Hidden" HorizontalAlignment="Center"/>
     <StackPanel x:Name="PageStatePanel" VerticalAlignment="Center" Margin="26">
@@ -37,5 +44,8 @@
    </WrapPanel>
    <Button Grid.Column="1" Content="关闭" Click="CloseClick" VerticalAlignment="Bottom" Margin="0,0,0,6"/>
   </Grid>
+  </Grid>
+  </Grid>
+  </Border>
  </Grid>
 </Window>

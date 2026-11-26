@@ -25,11 +25,29 @@ internal static class SmokeCheck
             if (isolated.LoadCredential()?.Cookie != sample.Cookie) throw new Exception("DPAPI round trip failed");
             if (File.ReadAllText(Path.Combine(isolated.Root, "credentials.dpapi")).Contains("smoke-test-only"))
                 throw new Exception("Plaintext credential leak");
+            var proof = new VerificationProof(sample.AccountKey, sample.Role.Key, "smoke-proof-only",
+                DateTimeOffset.UtcNow.AddMinutes(5));
+            isolated.SaveVerificationProof(proof);
+            if (isolated.LoadVerificationProof() is not { Value: "smoke-proof-only" })
+                throw new Exception("DPAPI verification proof round trip failed");
+            if (File.ReadAllText(Path.Combine(isolated.Root, "verification.dpapi")).Contains("smoke-proof-only"))
+                throw new Exception("Plaintext verification proof leak");
             isolated.Write("sync-state.json", new SyncCheckpoint(sample.AccountKey, sample.Role.Key, DateTimeOffset.UtcNow,
                 TimeSpan.FromMinutes(15), TimeSpan.Zero, FailureKind.Verification, 10035));
             isolated.ClearAccount();
             if (File.Exists(Path.Combine(isolated.Root, "sync-state.json")) || isolated.LoadCredential() is not null)
                 throw new Exception("Sign out did not clear credentials and sync state");
+            var lockedDir = isolated.WebViewProfilePath;
+            Directory.CreateDirectory(lockedDir);
+            using (File.Open(Path.Combine(lockedDir, "Cookies.lock"), FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+            {
+                isolated.ClearAccount();
+                if (string.Equals(isolated.WebViewProfilePath, lockedDir, StringComparison.OrdinalIgnoreCase))
+                    throw new Exception("Sign out reused locked WebView profile directory");
+            }
+            var reopenedStore = new LocalStore(isolated.Root);
+            if (Directory.Exists(lockedDir) || !string.Equals(reopenedStore.WebViewProfilePath, lockedDir, StringComparison.OrdinalIgnoreCase))
+                throw new Exception("Pending WebView profile cleanup did not complete on reopen");
             await WallpaperSmokeCheck.RunAsync(app, window);
             app.Demo = false; app.Settings.CharacterStyle = false; app.Settings.Expanded = false;
             window.ApplySettings();

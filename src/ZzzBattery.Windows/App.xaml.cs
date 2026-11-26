@@ -29,7 +29,7 @@ public partial class App : Application
     public bool Exiting { get; private set; }
     public EnergySnapshot DemoSnapshot { get; private set; } = null!;
     private HttpClient? _http;
-    private Forms.NotifyIcon? _tray;
+    private TrayIcon? _tray;
     private DispatcherTimer? _timer;
     private MainWindow _widget = null!;
     private AccountWindow? _account;
@@ -81,17 +81,44 @@ public partial class App : Application
             Wallpapers = new WallpaperService(root);
             Settings.ClickThrough = false; // Never lock the user out after a crash or restart.
             Settings.ReminderMinutes = Math.Clamp(Settings.ReminderMinutes, 1, 120);
+            Settings.ReminderEnergy = Math.Clamp(Settings.ReminderEnergy, 1, 240);
+            if (Settings.ReminderSound is not ("System" or "Custom" or "Silent")) Settings.ReminderSound = "System";
+            Settings.ReminderSoundPath ??= "";
             Palette.Apply(Settings);
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, AutomaticDecompression = DecompressionMethods.All })
             { Timeout = TimeSpan.FromSeconds(20) };
             Client = new MiyousheClient(_http, Settings.DeviceId, includeWidget: true);
-            _officialNotes = new OfficialNoteBrowser(root);
+            Client.VerificationProofChanged += proof => SafeStore(() =>
+            {
+                if (proof is null) Store.ClearVerificationProof();
+                else Store.SaveVerificationProof(proof);
+            });
+            _officialNotes = new OfficialNoteBrowser(root, () => Store.WebViewProfilePath);
+            Client.CredentialChanged += credential =>
+            {
+                if (credential.Role is null || Session?.Credential is not { Role: not null } active ||
+                    active.AccountKey != credential.AccountKey)
+                    return;
+                active.Cookie = credential.Cookie;
+                if (DailySign?.Credential is { } sign && sign.AccountKey == credential.AccountKey)
+                    sign.Cookie = credential.Cookie;
+                SafeStore(() => Store.SaveCredential(active));
+            };
+            Client.CredentialRecovery = async (credential, cancellation) =>
+                await _officialNotes.TryRefreshCredentialAsync(credential, cancellation);
             Session = new WidgetSession(Client, officialNoteReader: _officialNotes.ReadAsync);
             DailySign = new DailySignSession(Client);
             _dailySignReadyAt = DateTimeOffset.UtcNow.AddSeconds(15);
             Demo = e.Args.Contains("--demo");
             DemoSnapshot = DemoData.Create(DateTimeOffset.UtcNow);
             var credential = Demo || smoke ? null : Store.LoadCredential();
+            if (credential is not null)
+            {
+                var proof = Store.LoadVerificationProof();
+                if (proof is not null && proof.AccountKey == credential.AccountKey &&
+                    proof.RoleKey == credential.Role?.Key) Client.RestoreVerificationProof(proof);
+                else if (proof is not null) Store.ClearVerificationProof();
+            }
             Session.CheckpointChanged += checkpoint => Store.Write("sync-state.json", checkpoint);
             Session.SetCredential(credential, smoke ? null : Store.Read<EnergySnapshot>("snapshot.json"),
                 smoke ? null : Store.Read<SyncCheckpoint>("sync-state.json"));
@@ -113,6 +140,13 @@ public partial class App : Application
                 _widget?.Render();
             });
             _widget = new MainWindow(); MainWindow = _widget;
+            if (!Demo && !smoke && credential is null && Store.LastCredentialLoadIssue is not CredentialLoadIssue.None and not CredentialLoadIssue.Missing)
+                _widget.SetNotice(Store.LastCredentialLoadIssue switch
+                {
+                    CredentialLoadIssue.DecryptionFailed => "本机登录凭据无法解密，可能已更换 Windows 用户；请在设置中重新连接米游社。",
+                    CredentialLoadIssue.StorageUnavailable => "本机登录凭据暂时无法读取，请检查数据目录权限。",
+                    _ => "本机登录凭据已损坏或失效，请在设置中重新连接米游社。"
+                });
             if (!backgroundSmoke) { BuildTray(); _widget.Show(); _widget.ApplySettings(); }
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _timer.Tick += Tick; if (!uiSmoke && !placementSmoke && !displaySmoke && !backgroundSmoke) _timer.Start();
@@ -151,8 +185,8 @@ public partial class App : Application
 
     private void BuildTray()
     {
-        var resource = GetResourceStream(new Uri("pack://application:,,,/Assets/battery.ico"));
-        _tray = new Forms.NotifyIcon { Icon = new System.Drawing.Icon(resource.Stream), Text = "绝区零桌面电量", Visible = true };
+        using var iconStream = GetResourceStream(new Uri("pack://application:,,,/Assets/battery.ico")).Stream;
+        _tray = new TrayIcon(new System.Drawing.Icon(iconStream));
         var menu = new Forms.ContextMenuStrip();
         void Add(string label, Action action) => menu.Items.Add(label, null, (_, _) => Dispatcher.Invoke(action));
         Add("显示 / 隐藏小组件", ToggleVisibility);
@@ -171,8 +205,9 @@ public partial class App : Application
         menu.Items.Add(new Forms.ToolStripSeparator());
         Add("退出", Quit);
         _tray.ContextMenuStrip = menu;
-        _tray.MouseClick += (_, args) => { if (args.Button == Forms.MouseButtons.Left) Dispatcher.Invoke(ToggleVisibility); };
-        _tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWidget);
+        _tray.Click += () => Dispatcher.Invoke(ToggleVisibility);
+        _tray.BalloonClick += () => Dispatcher.Invoke(ShowWidget);
+        _tray.SoundFailed += () => Dispatcher.Invoke(() => _widget.SetNotice("自定义提示音不可用，已使用系统声音。请在设置中重新选择 WAV 文件。"));
     }
     private void ToggleVisibility() { if (_widget.IsVisible) _widget.Hide(); else ShowWidget(); }
     public void ShowWidget()
@@ -267,10 +302,14 @@ public partial class App : Application
     }
     public void SignOut()
     {
+        _verification?.ClearSessionCookies();
+        _account?.ClearSessionCookies();
+        _officialNotes?.ClearSessionCookies();
         _verification?.Close(); _dailySignWindow?.Close(); Client.ForgetVerification();
-        Store.ClearAccount(); Session.SetCredential(null); _reminders = new(); Demo = false;
+        _account?.Close(); _account = null;
         _officialNotes?.Reset();
-        _account?.Close(); _widget.Render();
+        Store.ClearAccount(); Session.SetCredential(null); _reminders = new(); Demo = false;
+        _widget.Render();
     }
     public async Task SignToday()
     {
@@ -333,20 +372,27 @@ public partial class App : Application
             }
             var projection = Session.Projection();
             if (_tray is not null) _tray.Text = projection is null ? "绝区零 · 未连接账号" : $"绝区零电量 {projection.Current}/{projection.Maximum}";
-            if (Settings.ReminderEnabled && Session.Snapshot is { } snapshot && projection is not null)
+            if (Session.Snapshot is { } snapshot && projection is not null)
             {
-                var message = _reminders.Evaluate(snapshot, projection, DateTimeOffset.UtcNow,
-                    !Demo && Session.Failure is null && !Session.ClockUncertain, Settings.ReminderMinutes);
-                if (message is not null)
+                var previous = _reminders with { };
+                var healthy = !Demo && Session.Failure is null && !Session.ClockUncertain;
+                var energyMessage = _reminders.EvaluateEnergy(snapshot, projection, healthy,
+                    Settings.EnergyReminderEnabled ? Settings.ReminderEnergy : null);
+                var fullMessage = Settings.ReminderEnabled ? _reminders.Evaluate(snapshot, projection,
+                    DateTimeOffset.UtcNow, healthy, Settings.ReminderMinutes) : null;
+                var message = energyMessage is null ? fullMessage : fullMessage is null ? energyMessage : energyMessage + "\n" + fullMessage;
+                if (_reminders != previous)
                 {
-                    _tray?.ShowBalloonTip(6000, "绝区零 · 电量提醒", message, Forms.ToolTipIcon.Info);
-                    SafeStore(() => Store.Write("reminders.json", _reminders));
+                    // Persist arming as well as delivery so restarting below/above the target is safe.
+                    if (message is not null && !ShowReminder(message)) _reminders = previous;
+                    if (_reminders != previous) SafeStore(() => Store.Write("reminders.json", _reminders));
                 }
             }
         }
         catch { _widget.SetNotice("暂时无法更新，请稍后刷新。"); }
         finally { _ticking = false; }
     }
+    internal bool ShowReminder(string message) => _tray?.ShowReminder(message, Settings.ReminderSound, Settings.ReminderSoundPath) == true;
     private void PowerChanged(object sender, PowerModeChangedEventArgs e)
     {
         if (e.Mode == PowerModes.Resume) Dispatcher.BeginInvoke(() => { Session.InvalidateTime(); DailySign.InvalidateTime(); _widget.RestorePosition(); });
@@ -368,7 +414,8 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         Exiting = true; _timer?.Stop(); DailySign?.Dispose(); Session?.Dispose(); _officialNotes?.Dispose(); _http?.Dispose(); Wallpapers?.Dispose();
-        if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); }
+        _tray?.Dispose();
+        Store?.CleanupPendingProfiles();
         SystemEvents.PowerModeChanged -= PowerChanged;
         SystemEvents.DisplaySettingsChanged -= DisplayChanged;
         SystemEvents.TimeChanged -= TimeChanged;

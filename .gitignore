@@ -6,7 +6,7 @@ dist/
 *.user
 credentials.json
 *.dpapi
-WebViewProfile/
+WebViewProfile*/
 user-data/
 tools/
 
