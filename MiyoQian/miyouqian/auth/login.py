@@ -1,0 +1,302 @@
+# -*- coding: utf-8 -*-
+"""扫码登录与凭证刷新。"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import pathlib
+import threading
+import time
+import uuid
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from .. import constants as c
+from ..core import cookies, crypto
+from ..core import device as devicelib
+from ..core.http import ApiClient
+
+
+class _QrRefreshed(Exception):
+    pass
+
+
+class AigisRequired(RuntimeError):
+    def __init__(self, message: str, aigis: str) -> None:
+        super().__init__(message)
+        self.aigis = aigis
+
+
+_RSA_MODULUS = int(
+    "c3bde91d3cc1cddc06219bfbe4b494fe609afb708e4372c34aa9db31e43657d200"
+    "ee585b888f377006eb6b2183cd9912751bcc9b0c817ba035b6784a66e6c31b2fd"
+    "cecf44c5709dbeaae7e75a842dbaa3d17c6d3132296821c5488e743df3e94c557"
+    "d5edfe19b2570a24a0e5c59401200a7f900a01ace766c5a1832dca2fb111",
+    16,
+)
+_RSA_EXPONENT = 65537
+_RSA_KEY_BYTES = 128
+
+# 通行证换票接口的 token 类型
+TOKEN_TYPE_STOKEN = 1
+TOKEN_TYPE_LTOKEN = 2
+TOKEN_TYPE_COOKIE_TOKEN = 4
+_LIFECYCLE_ID = str(uuid.uuid4())
+
+
+def passport_rsa_encrypt(text: str) -> str:
+    data = text.encode("utf-8")
+    if len(data) > _RSA_KEY_BYTES - 11:
+        raise ValueError("待加密内容过长")
+    padding_size = _RSA_KEY_BYTES - len(data) - 3
+    padding = bytearray()
+    while len(padding) < padding_size:
+        padding.extend(byte for byte in os.urandom(padding_size - len(padding)) if byte != 0)
+    block = b"\x00\x02" + bytes(padding) + b"\x00" + data
+    encrypted = pow(int.from_bytes(block, "big"), _RSA_EXPONENT, _RSA_MODULUS)
+    return base64.b64encode(encrypted.to_bytes(_RSA_KEY_BYTES, "big")).decode("ascii")
+
+
+class PassportLogin:
+    def __init__(self, client: ApiClient, device: dict[str, Any]) -> None:
+        self.client = client
+        self.device = device
+        self.device_id = str(device.get("id") or "")
+        # 没有 fp 就是空串，各个请求头据此省略 x-rpc-device_fp，不拿随机串顶替
+        self.device_fp = devicelib.effective_fp(device)
+        self.device_model = devicelib.device_model(device)
+        self.device_name = devicelib.device_name(device)
+
+    def _fp_header(self) -> dict[str, str]:
+        return {"x-rpc-device_fp": self.device_fp} if self.device_fp else {}
+
+    def get_additional_tokens(self, stoken: str, mid: str) -> dict[str, str]:
+        """用 v2 stoken 换 ltoken_v2（365 天）和 cookie_token_v2（48 小时）。"""
+        ltoken = self._exchange_token(stoken, mid, TOKEN_TYPE_LTOKEN, "ltoken_v2")
+        cookie_token = self._exchange_token(stoken, mid, TOKEN_TYPE_COOKIE_TOKEN, "cookie_token_v2")
+        return {"ltoken": ltoken, "cookie_token": cookie_token}
+
+    def _exchange_headers(self, body: str) -> dict[str, str]:
+        return {
+            "content-type": "application/json",
+            "DS": crypto.ds_exchange(body),
+            "user-agent": devicelib.mobile_ua(self.device),
+            "x-rpc-app_version": c.BBS_VERSION,
+            "x-rpc-client_type": "2",
+            "x-rpc-app_id": c.PASSPORT_APP_ID,
+            "x-rpc-device_id": self.device_id,
+            **self._fp_header(),
+            "x-rpc-device_name": self.device_name,
+            "x-rpc-device_model": self.device_model,
+            "x-rpc-game_biz": "bbs_cn",
+            "x-rpc-sdk_version": c.PASSPORT_SDK_VERSION,
+            "x-rpc-account_version": c.PASSPORT_SDK_VERSION,
+            "x-rpc-lifecycle_id": _LIFECYCLE_ID,
+        }
+
+    def _exchange_token(self, stoken: str, mid: str, token_type: int, label: str) -> str:
+        body = json.dumps(
+            {"dst_token_type": token_type, "src_token": {"token": stoken, "token_type": TOKEN_TYPE_STOKEN}, "mid": mid},
+            separators=(",", ":"),
+        )
+        data = self.client.post_json(c.TOKEN_EXCHANGE_URL, content=body, headers=self._exchange_headers(body))
+        ensure_ok(data, f"stoken 换 {label} 失败")
+        token = str(((data.get("data") or {}).get("token") or {}).get("token") or "")
+        if not token:
+            raise RuntimeError(f"stoken 换 {label} 失败: 接口未返回 token")
+        return token
+
+
+class QRLogin(PassportLogin):
+    def fetch(self) -> tuple[str, str]:
+        body = "{}"
+        data = self.client.post_json(
+            c.QRCODE_FETCH_URL,
+            json={},
+            headers=self._headers(body),
+        )
+        ensure_ok(data, "生成二维码失败")
+        url = str(data.get("data", {}).get("url", ""))
+        ticket = str(data.get("data", {}).get("ticket", ""))
+        if not url or not ticket:
+            raise RuntimeError("二维码接口未返回 url/ticket")
+        return url, ticket
+
+    def wait(self, ticket: str, timeout: int = 120, cancel: threading.Event | None = None, cancel_events: list[threading.Event] | None = None) -> dict[str, str]:
+        started = time.time()
+        last_status = ""
+        while time.time() - started < timeout:
+            events = list(cancel_events or [])
+            if cancel is not None:
+                events.append(cancel)
+            for event in events:
+                if event.is_set():
+                    raise _QrRefreshed()
+            body = json.dumps({"ticket": ticket}, separators=(",", ":"))
+            data = self.client.post_json(
+                c.QRCODE_QUERY_URL,
+                json={"ticket": ticket},
+                headers=self._headers(body),
+            )
+            ensure_ok(data, "查询二维码状态失败")
+            status_data = data.get("data", {})
+            status = str(status_data.get("status", ""))
+            if status != last_status:
+                if status == "Init":
+                    print("等待扫码...")
+                elif status == "Scanned":
+                    print("已扫码，请在米游社 APP 确认登录。")
+                elif status == "Confirmed":
+                    print("已确认，正在获取凭证。")
+                last_status = status
+            if status == "Confirmed":
+                user_info = status_data.get("user_info", {})
+                mid = str(user_info.get("mid") or "")
+                aid = str(user_info.get("aid") or "")
+                tokens = status_data.get("tokens", [])
+                stoken = str(tokens[0].get("token") or "") if tokens else ""
+                if not stoken or not mid or not aid:
+                    raise RuntimeError("扫码结果缺少 stoken/mid/aid")
+                return {"stoken": stoken, "mid": mid, "stuid": aid}
+            time.sleep(2)
+        raise TimeoutError("扫码登录超时")
+
+    def _headers(self, body: str) -> dict[str, str]:
+        return {
+            "User-Agent": c.PASSPORT_APP_UA,
+            "Accept": "*/*",
+            "Accept-Language": "zh-cn",
+            "x-rpc-client_type": "3",
+            "x-rpc-app_version": c.PASSPORT_APP_VERSION,
+            "x-rpc-device_id": self.device_id,
+            **self._fp_header(),
+            "x-rpc-game_biz": "bbs_cn",
+            "x-rpc-app_id": c.PASSPORT_APP_ID,
+            "x-rpc-sdk_version": c.PASSPORT_APP_VERSION,
+            "x-rpc-device_model": self.device_model,
+            "x-rpc-device_name": self.device_name,
+            "x-rpc-account_version": c.PASSPORT_APP_VERSION,
+            "DS": crypto.ds_x4(body=body),
+            "Content-Type": "application/json; charset=UTF-8",
+        }
+
+class CaptchaLogin(PassportLogin):
+    def create_captcha(self, phone: str, aigis: str = "") -> dict[str, str]:
+        body = {"area_code": passport_rsa_encrypt("+86"), "mobile": passport_rsa_encrypt(phone)}
+        data, headers = self.client.post_json_with_headers(
+            c.LOGIN_CAPTCHA_URL,
+            json=body,
+            headers=self._captcha_headers(aigis, create=True),
+        )
+        ensure_ok_or_aigis(data, headers, "发送短信验证码失败")
+        payload = data.get("data", {})
+        action_type = str(payload.get("action_type") or "")
+        if not action_type:
+            raise RuntimeError("发送短信验证码失败: 接口未返回 action_type")
+        return {
+            "action_type": action_type,
+            "countdown": str(payload.get("countdown") or ""),
+            "sent_new": str(payload.get("sent_new") or ""),
+        }
+
+    def login_by_mobile_captcha(
+        self, phone: str, captcha: str, action_type: str, aigis: str = ""
+    ) -> dict[str, str]:
+        body = {
+            "area_code": passport_rsa_encrypt("+86"),
+            "mobile": passport_rsa_encrypt(phone),
+            "action_type": action_type,
+            "captcha": captcha,
+        }
+        data, headers = self.client.post_json_with_headers(
+            c.LOGIN_BY_MOBILE_CAPTCHA_URL,
+            json=body,
+            headers=self._captcha_headers(aigis, create=False),
+        )
+        ensure_ok_or_aigis(data, headers, "短信验证码登录失败")
+        payload = data.get("data", {})
+        user_info = payload.get("user_info") or {}
+        token = payload.get("token") or {}
+        stoken = str(token.get("token") or "")
+        mid = str(user_info.get("mid") or "")
+        aid = str(user_info.get("aid") or "")
+        if not stoken or not mid or not aid:
+            raise RuntimeError("短信验证码登录结果缺少 stoken/mid/aid")
+        return {"stoken": stoken, "mid": mid, "stuid": aid}
+
+    def _captcha_headers(self, aigis: str, create: bool) -> dict[str, str]:
+        headers = {
+            "x-rpc-aigis": aigis or "",
+            "x-rpc-app_version": c.BBS_VERSION,
+            "x-rpc-client_type": "2",
+            "x-rpc-app_id": c.PASSPORT_APP_ID,
+            **self._fp_header(),
+            "x-rpc-device_name": self.device_name,
+            "x-rpc-device_id": self.device_id,
+            "x-rpc-device_model": self.device_model,
+            "user-agent": f"Mozilla/5.0 (Linux; Android {devicelib.sys_version(self.device)}) Mobile miHoYoBBS/{c.BBS_VERSION}",
+            "content-type": "application/json",
+        }
+        if create:
+            headers.update(
+                {
+                    "referer": "https://user.miyoushe.com/",
+                    "x-rpc-game_biz": "hk4e_cn",
+                }
+            )
+        return headers
+
+def print_qrcode(text: str, image_path: pathlib.Path | None = None) -> None:
+    import qrcode
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=1,
+        border=1,
+    )
+    qr.add_data(text)
+    qr.make(fit=True)
+    qr.print_ascii(invert=True)
+    if image_path:
+        qrcode.make(text).save(image_path)
+
+
+def refresh_cookie_token(client: ApiClient, account: dict[str, Any], device: dict[str, Any] | None = None) -> bool:
+    """用 v2 stoken 重新换一组 V2 凭证并重建整条 cookie，旧版 V1 cookie 也顺带迁成 V2。
+
+    v1 stoken 换不了 V2 凭证，只能重新扫码登录。"""
+    cookie = str(account.get("cookie") or "")
+    stoken = str(account.get("stoken") or "")
+    mid = str(account.get("mid") or cookies.guess_mid(cookie))
+    uid = str(account.get("stuid") or cookies.guess_uid(cookie))
+    if not stoken.startswith("v2_") or not mid or not uid:
+        return False
+    try:
+        tokens = PassportLogin(client, device or {}).get_additional_tokens(stoken, mid)
+    except Exception:
+        return False
+    account["cookie"] = cookies.build_cookie(uid, mid, tokens["ltoken"], tokens["cookie_token"])
+    return True
+
+
+def ensure_ok(data: dict[str, Any], message: str) -> None:
+    if data.get("retcode") != 0:
+        raise RuntimeError(f"{message}: retcode={data.get('retcode')} message={data.get('message')}")
+
+
+def ensure_ok_or_aigis(data: dict[str, Any], headers: Any, message: str) -> None:
+    if data.get("retcode") == 0:
+        return
+    aigis = ""
+    if headers is not None:
+        aigis = str(headers.get("x-rpc-aigis") or "")
+    if aigis:
+        raise AigisRequired(
+            f"{message}: 接口要求完成官方人机验证(AIGIS)；"
+            f"retcode={data.get('retcode')} message={data.get('message')}",
+            aigis,
+        )
+    ensure_ok(data, message)

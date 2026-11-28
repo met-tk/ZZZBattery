@@ -1,0 +1,205 @@
+# -*- coding: utf-8 -*-
+"""接口常量与业务映射。"""
+
+from typing import Any
+
+BBS_VERSION = "2.106.2"
+QR_LOGIN_VERSION = "2.102.1"
+PASSPORT_APP_VERSION = "2.90.1"
+PASSPORT_SDK_VERSION = "2.44.0"
+
+# K2，必须和 BBS_VERSION 配套；不匹配时分享接口会返回 -10001 invalid request
+BBS_SALT = "f70f2a3fb531ea0960674df467b5ee4c"
+BBS_WEB_SALT = "G1ktdwFL4IyGkHuuWSmz0wUe9Db9scyK"
+BBS_X6_SALT = "t0qEgfub6cvueAPgR5m9aQWWVciEer7v"
+PASSPORT_X4_SALT = "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs"
+PASSPORT_APP_SALT = "dDIQHbKOdaPaLuvQKVzUzqdeCaxjtaPV"
+PASSPORT_EXCHANGE_SALT = "JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS"
+
+PASSPORT_APP_ID = "bll8iq97cem8"
+QRCODE_APP_APP_ID = "ddxf5dufpuyo"
+
+TAKUMI_API = "https://api-takumi.mihoyo.com"
+BBS_API = "https://bbs-api.miyoushe.com"
+PASSPORT_API = "https://passport-api.mihoyo.com"
+ZZZ_ACT_API = "https://act-nap-api.mihoyo.com"
+
+ACCOUNT_ROLES_URL = f"{TAKUMI_API}/binding/api/getUserGameRolesByCookie"
+
+
+def luna_endpoints(api: str, signgame: str) -> dict[str, Any]:
+    """签到接口按游戏分路径（/event/luna/<signgame>/...），还必须带同名的 x-rpc-signgame 头。
+
+    旧的不带游戏段的 /event/luna/... 正在灰度下线，部分账号会返回 -500001。"""
+    base = f"{api}/event/luna/{signgame}"
+    return {
+        "home_url": f"{base}/home?lang=zh-cn",
+        "info_url": f"{base}/info?lang=zh-cn",
+        "sign_url": f"{base}/sign",
+        "extra_headers": {"x-rpc-signgame": signgame},
+    }
+
+
+BBS_TASKS_URL = f"{BBS_API}/apihub/wapi/getUserMissionsState"
+BBS_SIGN_URL = f"{BBS_API}/apihub/app/api/signIn"
+BBS_POST_LIST_URL = f"{BBS_API}/post/api/getForumPostList"
+BBS_DETAIL_URL = f"{BBS_API}/post/api/getPostFull"
+BBS_SHARE_URL = f"{BBS_API}/apihub/api/getShareConf"
+BBS_LIKE_URL = f"{BBS_API}/post/api/post/upvote"
+BBS_CREATE_VERIFICATION_URL = f"{BBS_API}/misc/api/createVerification?is_high=true"
+BBS_VERIFY_VERIFICATION_URL = f"{BBS_API}/misc/api/verifyVerification"
+BBS_USER_INFO_URL = f"{BBS_API}/user/api/getUserFullInfo"
+
+MALL_POINT_URL = f"{TAKUMI_API}/common/homutreasure/v1/web/user/point"
+MALL_GOODS_LIST_URL = f"{TAKUMI_API}/mall/v1/web/goods/list"
+MALL_GOOD_DETAIL_URL = f"{TAKUMI_API}/mall/v1/web/goods/detail"
+MALL_EXCHANGE_URL = "https://api-takumi.miyoushe.com/mall/v1/web/goods/exchange"
+MALL_ADDRESS_URL = f"{TAKUMI_API}/account/address/list"
+DEVICE_FP_URL = "https://public-data-api.mihoyo.com/device-fp/api/getFp"
+
+QRCODE_FETCH_URL = f"{PASSPORT_API}/account/ma-cn-passport/app/createQRLogin"
+QRCODE_QUERY_URL = f"{PASSPORT_API}/account/ma-cn-passport/app/queryQRLoginStatus"
+LOGIN_CAPTCHA_URL = f"{PASSPORT_API}/account/ma-cn-verifier/verifier/createLoginCaptcha"
+LOGIN_BY_MOBILE_CAPTCHA_URL = f"{PASSPORT_API}/account/ma-cn-passport/app/loginByMobileCaptcha"
+TOKEN_EXCHANGE_URL = f"{PASSPORT_API}/account/ma-cn-session/app/exchange"
+
+WEBVIEW_CHROME_VERSION = "103.0.5060.129"
+
+# 没有设备档案可用时的兜底 UA（头像、服务器时间校准等与设备身份无关的请求）；
+# 带设备身份的请求用 core.device.mobile_ua
+DEFAULT_MOBILE_UA = (
+    "Mozilla/5.0 (Linux; Android 12; Unspecified Device) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
+    f"Chrome/{WEBVIEW_CHROME_VERSION} Mobile Safari/537.36 miHoYoBBS/{BBS_VERSION}"
+)
+
+QR_MOBILE_UA = (
+    f"Mozilla/5.0 (Linux; Android 12) Mobile miHoYoBBS/{QR_LOGIN_VERSION}"
+)
+
+PASSPORT_APP_UA = f"Mozilla/5.0 miHoYoBBS/{PASSPORT_APP_VERSION} Capture/2.2.0"
+
+GAMES = {
+    "genshin": {
+        "name": "原神",
+        "role": "旅行者",
+        "game_biz": "hk4e_cn",
+        "act_id": "e202311201442471",
+        **luna_endpoints(TAKUMI_API, "hk4e"),
+    },
+    "starrail": {
+        "name": "崩坏：星穹铁道",
+        "role": "开拓者",
+        "game_biz": "hkrpg_cn",
+        "act_id": "e202304121516551",
+        **luna_endpoints(TAKUMI_API, "hkrpg"),
+    },
+    "zzz": {
+        "name": "绝区零",
+        "role": "绳匠",
+        "game_biz": "nap_cn",
+        "act_id": "e202406242138391",
+        **luna_endpoints(ZZZ_ACT_API, "zzz"),
+    },
+    "honkai3rd": {
+        "name": "崩坏3",
+        "role": "舰长",
+        "game_biz": "bh3_cn",
+        "act_id": "e202306201626331",
+        **luna_endpoints(TAKUMI_API, "bh3"),
+    },
+    "tears": {
+        "name": "未定事件簿",
+        "role": "律师",
+        "game_biz": "nxx_cn",
+        "act_id": "e202202251749321",
+        **luna_endpoints(TAKUMI_API, "nxx"),
+    },
+    "honkai2": {
+        "name": "崩坏学园2",
+        "role": "玩家",
+        "game_biz": "bh2_cn",
+        "act_id": "e202203291431091",
+        **luna_endpoints(TAKUMI_API, "bh2"),
+    },
+}
+
+CLOUD_GAMES = {
+    "genshin": {
+        "name": "云原神",
+        "coin_name": "米云币",
+        "sign_url": "https://api-cloudgame.mihoyo.com/hk4e_cg_cn/wallet/wallet/get",
+        "host": "api-cloudgame.mihoyo.com",
+        "referer": "https://app.mihoyo.com",
+    },
+    "zzz": {
+        "name": "云绝区零",
+        "coin_name": "邦邦点",
+        "sign_url": "https://cg-nap-api.mihoyo.com/nap_cn/cg/wallet/wallet/get",
+        "host": "cg-nap-api.mihoyo.com",
+        "referer": "",
+    },
+}
+
+# 国际服（HoYoLAB）签到：按 HoYoLAB 账号计算，只靠 cookie 鉴权，不需要 DS 和设备头。
+# 接口来自 genshin.py，尚未用真实账号验证。
+OS_HK4E_API = "https://sg-hk4e-api.hoyolab.com"
+OS_PUBLIC_API = "https://sg-public-api.hoyolab.com"
+OS_BBS_API = "https://bbs-api-os.hoyolab.com"
+OS_USER_INFO_URL = f"{OS_BBS_API}/community/user/wapi/getUserFullInfo"
+OS_ACT_ORIGIN = "https://act.hoyolab.com"
+OS_LANG = "zh-cn"
+OS_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
+
+# key 与 GAMES 保持一致，这样共用的 games.enabled 可以直接用；国际服没有的游戏（如崩坏学园2）不在这里。
+# base_url 下依次是 info / home / sign 三个子路径，signgame 对应请求头 x-rpc-signgame。
+OS_GAMES = {
+    "genshin": {
+        "name": "原神",
+        "act_id": "e202102251931481",
+        "base_url": f"{OS_HK4E_API}/event/sol",
+        "signgame": "hk4e",
+    },
+    "starrail": {
+        "name": "崩坏：星穹铁道",
+        "act_id": "e202303301540311",
+        "base_url": f"{OS_PUBLIC_API}/event/luna/hkrpg/os",
+        "signgame": "hkrpg",
+    },
+    "zzz": {
+        "name": "绝区零",
+        "act_id": "e202406031448091",
+        "base_url": f"{OS_PUBLIC_API}/event/luna/zzz/os",
+        "signgame": "zzz",
+    },
+    "honkai3rd": {
+        "name": "崩坏3",
+        "act_id": "e202110291205111",
+        "base_url": f"{OS_PUBLIC_API}/event/mani",
+        "signgame": "bh3",
+    },
+    "tears": {
+        "name": "未定事件簿",
+        "act_id": "e202202281857121",
+        "base_url": f"{OS_PUBLIC_API}/event/luna/nxx/os",
+        "signgame": "nxx",
+    },
+}
+
+CLOUD_GAME_DISABLED_REASONS = {
+    "starrail": "云星穹铁道是版本更新赠送 600 分钟，不需要每日签到获取时长",
+}
+
+BBS_FORUMS = {
+    1: {"id": "1", "forum_id": "1", "name": "崩坏3"},
+    2: {"id": "2", "forum_id": "26", "name": "原神"},
+    3: {"id": "3", "forum_id": "30", "name": "崩坏2"},
+    4: {"id": "4", "forum_id": "37", "name": "未定事件簿"},
+    5: {"id": "5", "forum_id": "34", "name": "大别野"},
+    6: {"id": "6", "forum_id": "52", "name": "崩坏：星穹铁道"},
+    8: {"id": "8", "forum_id": "57", "name": "绝区零"},
+    9: {"id": "9", "forum_id": "948", "name": "崩坏：因缘精灵"},
+}

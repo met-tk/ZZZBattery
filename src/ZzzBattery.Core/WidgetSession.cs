@@ -117,8 +117,7 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
         _failures = checkpoint.ConsecutiveFailures;
         _preferOfficialPage |= checkpoint.PreferOfficialPage;
         _automaticRecoveryAttempted = checkpoint.AutomaticRecoveryAttempted;
-        // A crash during a hidden browser read has no verification code. Let the
-        // next process retry once; explicit challenge checkpoints remain paused.
+        // Old checkpoints may record an interrupted browser read as verification.
         if (_automaticRecoveryAttempted && checkpoint.FailureKind == FailureKind.Verification &&
             checkpoint.FailureCode is null)
             _automaticRecoveryAttempted = false;
@@ -137,8 +136,8 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             Failure = new(failureKind, message, checkpoint.FailureCode, ScheduledRemaining);
             Failure.VerificationPath = checkpoint.VerificationPath == "/api/zzz/widget" ? "/api/zzz/widget" : "/api/zzz/note";
             Message = message;
-            if (failureKind == FailureKind.Verification && _automaticRecoveryAttempted)
-                Failure = new(failureKind, Message = "后台恢复未完成，已暂停自动尝试。可在方便时点击“恢复电量同步”处理。",
+            if (officialNoteReader is not null && failureKind is FailureKind.Verification or FailureKind.Login)
+                Failure = new(failureKind, Message = "已保留登录会话，将在冷却结束后自动恢复同步。",
                     checkpoint.FailureCode, ScheduledRemaining) { VerificationPath = Failure.VerificationPath };
         }
         else Message = "已恢复上次数据，等待定时同步";
@@ -244,7 +243,7 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             }
             return Task.CompletedTask;
         }
-        var canRecover = officialNoteReader is not null && Failure?.Kind == FailureKind.Verification && !_automaticRecoveryAttempted;
+        var canRecover = officialNoteReader is not null && Failure?.Kind is FailureKind.Verification or FailureKind.Login;
         if (!manual && (ScheduledRemaining > TimeSpan.Zero || (Failure?.NeedsUser == true && !canRecover))) return Task.CompletedTask;
         _flight = FetchAsync(Credential, _generation, _cancel.Token);
         return _flight;
@@ -274,14 +273,21 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
             _failures = Math.Min(_failures + 1, 100);
             var minutes = new[] { 1, 2, 5, 15 }[Math.Min(_failures - 1, 3)];
             if (error.NeedsUser) minutes = 15;
+            if (officialNoteReader is not null && error.Kind is FailureKind.Verification or FailureKind.Login)
+            {
+                minutes = new[] { 15, 30, 60 }[Math.Min(_failures - 1, 2)];
+                Message = error.Kind == FailureKind.Login
+                    ? "登录会话暂不可用，将自动重试恢复；若官方已撤销登录，需重新连接账号。"
+                    : "官方便笺暂未恢复，将自动重试；也可点击“恢复电量同步”查看官方提示。";
+            }
             var delay = error.RetryAfter ?? TimeSpan.FromMinutes(minutes);
             // A hidden WebView can fail transiently without receiving a verification code.
-            // Retry that first failure once; explicit challenge responses still pause for the user.
+            // Older browser adapters reported transient timeouts as verification failures.
             if (error.Kind == FailureKind.Verification && error.Code is null &&
-                _automaticRecoveryAttempted && _failures == 1)
+                _automaticRecoveryAttempted)
             {
                 _automaticRecoveryAttempted = false;
-                delay = TimeSpan.FromMinutes(1);
+                delay = error.RetryAfter ?? TimeSpan.FromMinutes(new[] { 1, 2, 5, 15 }[Math.Min(_failures - 1, 3)]);
             }
             if (delay < TimeSpan.FromSeconds(60)) delay = TimeSpan.FromSeconds(60);
             if (delay > TimeSpan.FromHours(24)) delay = TimeSpan.FromHours(24);
@@ -296,11 +302,11 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
     private async Task<EnergySnapshot> ReadSnapshotAsync(Credential credential, int generation, CancellationToken cancellation)
     {
         if (officialNoteReader is null) return await client.GetNoteAsync(credential, credential.Role!, cancellation);
-        if (!_preferOfficialPage && Failure?.Kind != FailureKind.Verification)
+        if (!_preferOfficialPage && Failure?.Kind is not (FailureKind.Verification or FailureKind.Login))
         {
             try { return await client.GetNoteAsync(credential, credential.Role!, cancellation); }
-            catch (ApiFailure error) when (error.Kind == FailureKind.Verification &&
-                !_automaticRecoveryAttempted && !(error.RetryAfter > TimeSpan.Zero))
+            catch (ApiFailure error) when (error.Kind is FailureKind.Verification or FailureKind.Login &&
+                !(error.RetryAfter > TimeSpan.Zero))
             {
                 if (generation != _generation || cancellation.IsCancellationRequested) throw new OperationCanceledException(cancellation);
                 Failure = error;
@@ -319,7 +325,7 @@ public sealed class WidgetSession(IMiyousheClient client, TimeProvider? clock = 
         if (snapshot.AccountKey != credential.AccountKey || snapshot.RoleKey != credential.Role!.Key ||
             snapshot.Source != "官方网页便笺" || snapshot.ReceivedAt < _clock.GetUtcNow().AddMinutes(-1) ||
             snapshot.ReceivedAt > _clock.GetUtcNow().AddMinutes(1))
-            throw new ApiFailure(FailureKind.Verification, "后台未取得当前角色的新数据，已暂停自动尝试。可点击“恢复电量同步”处理。");
+            throw new ApiFailure(FailureKind.Verification, "后台未取得当前角色的新数据，将自动重试恢复。");
         return snapshot;
     }
 

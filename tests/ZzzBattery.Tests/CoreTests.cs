@@ -121,6 +121,41 @@ public sealed class CoreTests
         Assert.Contains("cookie_token_v2=refreshed", changed!.Cookie);
     }
     [Theory]
+    [InlineData(-100)]
+    [InlineData(10001)]
+    [InlineData(-101)]
+    public async Task Http200LoginRetcodeRecoversOnlyOnce(int code)
+    {
+        var account = Credential(); var calls = 0; var recoveries = 0; var changes = 0;
+        using var http = new HttpClient(new Handler(_ =>
+        {
+            calls++;
+            return Json($$"""{"retcode":{{code}},"data":null}""");
+        }));
+        var client = new MiyousheClient(http, "device")
+        {
+            CredentialRecovery = (c, _) =>
+            { recoveries++; c.Cookie += "; cookie_token_v2=renewed"; return Task.FromResult(true); }
+        };
+        client.CredentialChanged += _ => changes++;
+        var error = await Assert.ThrowsAsync<ApiFailure>(() => client.GetNoteAsync(account, Role));
+        Assert.Equal(FailureKind.Login, error.Kind);
+        Assert.Equal(2, calls); Assert.Equal(1, recoveries); Assert.Equal(1, changes);
+    }
+
+    [Fact]
+    public void BrowserRotationPreservesAppTokensAndRejectsOtherAccounts()
+    {
+        var account = Cookies.Create("account_id=123; cookie_token=old; stuid=123; stoken=app-token");
+        Assert.True(Cookies.TryMergeBrowserCookies(account, [("account_id", "123"), ("cookie_token", "renewed")]));
+        Assert.Contains("cookie_token=renewed", account.Cookie);
+        Assert.Contains("stoken=app-token", account.Cookie);
+        var before = account.Cookie;
+        Assert.False(Cookies.TryMergeBrowserCookies(account, [("account_id", "456"), ("cookie_token", "other")]));
+        Assert.Equal(before, account.Cookie);
+    }
+
+    [Theory]
     [InlineData("mihoyo.com", true)]
     [InlineData("www.miyoushe.com", true)]
     [InlineData("mihoyo.com.evil.example", false)]
@@ -293,6 +328,129 @@ public sealed class CoreTests
         var full = EnergyEstimator.Project(snapshot, TimeSpan.FromSeconds(450));
         Assert.NotNull(state.Evaluate(snapshot, full, Now.AddSeconds(450), true, 30));
         Assert.Null(state.Evaluate(snapshot, full, Now.AddSeconds(451), true, 30));
+    }
+    [Fact]
+    public async Task AutoDeviceFpRegistersCachesAndSurvivesFailures()
+    {
+        var fpCalls = 0;
+        var failFp = false;
+        using var http = new HttpClient(new Handler(request =>
+        {
+            if (request.RequestUri!.AbsoluteUri == MiyousheClient.DeviceFpEndpoint)
+            {
+                fpCalls++;
+                Assert.False(request.Headers.Contains("Cookie"));
+                if (failFp) return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+                using var bodyDoc = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                var platform = bodyDoc.RootElement.GetProperty("platform").GetString();
+                return Json("{\"retcode\":0,\"data\":{\"code\":200,\"device_fp\":\"fp-platform-" + platform + "\"}}");
+            }
+            Assert.Equal("fp-platform-4", request.Headers.GetValues("x-rpc-device_fp").Single());
+            return Json("""{"retcode":0,"data":{"energy":{"progress":{"current":200,"max":240},"restore":14400}}}""");
+        }));
+        var client = new MiyousheClient(http, "test-device", autoDeviceFp: true);
+        string? observedWebFp = null;
+        client.DeviceFingerprintChanged += (_, webFp, _, _) => observedWebFp = webFp;
+
+        await client.GetNoteAsync(Credential(), Role);
+        await client.GetNoteAsync(Credential(), Role);
+        Assert.Equal(1, fpCalls);
+        Assert.Equal("fp-platform-4", observedWebFp);
+
+        // Simulated getFp failure with an uncached Android client must not block the main request.
+        failFp = true;
+        var fallbackClient = new MiyousheClient(http, "test-device", autoDeviceFp: true);
+        Assert.Null(await fallbackClient.EnsureDeviceFpAsync(android: true));
+    }
+
+    [Fact]
+    public async Task WidgetRequestUsesAndroidAppProfileAnd6xSalt()
+    {
+        var account = Cookies.Create("account_id=123; cookie_token=web-token; stuid=123; stoken=v2_app; mid=mid-test");
+        account.Role = Role;
+        using var http = new HttpClient(new Handler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("getUserGameRolesByCookie"))
+                return Json("""{"retcode":0,"data":{"list":[{"game_uid":"100000001","region":"prod_gf_cn"}]}}""");
+            Assert.EndsWith("/widget", path);
+            Assert.Equal("?version=WV_V2", request.RequestUri.Query);
+            Assert.Equal("2", request.Headers.GetValues("x-rpc-client_type").Single());
+            Assert.Equal("bll8iq97cem8", request.Headers.GetValues("x-rpc-app_id").Single());
+            Assert.Equal(MiyousheClient.WidgetAppVersion, request.Headers.GetValues("x-rpc-app_version").Single());
+            Assert.Equal("fp-android", request.Headers.GetValues("x-rpc-device_fp").Single());
+            Assert.Equal("https://app.mihoyo.com/", request.Headers.Referrer?.ToString());
+            Assert.False(request.Headers.Contains("Origin"));
+            Assert.False(request.Headers.Contains("x-rpc-platform"));
+            var ds = request.Headers.GetValues("DS").Single().Split(',');
+            Assert.Equal(MiyousheClient.SignAndroid("version=WV_V2", long.Parse(ds[0]), int.Parse(ds[1])), string.Join(',', ds));
+            var cookie = request.Headers.GetValues("Cookie").Single();
+            Assert.Contains("stoken=v2_app", cookie);
+            Assert.Contains("mid=mid-test", cookie);
+            Assert.DoesNotContain("web-token", cookie);
+            return Json("""{"retcode":0,"data":{"energy":{"progress":{"current":180,"max":240},"restore":21600}}}""");
+        }));
+        var client = new MiyousheClient(http, "test-device", includeWidget: true);
+        client.RestoreDeviceFingerprints("fp-android", "fp-web", DateTimeOffset.UtcNow);
+        var snapshot = await client.GetNoteAsync(account, Role);
+        Assert.Equal("官方小组件", snapshot.Source);
+        Assert.Equal(180, snapshot.Current);
+    }
+
+    [Fact]
+    public async Task GetRolesAsyncUsesStokenEndpointWhenOnlyStokenAndMidPresent()
+    {
+        var account = Cookies.Create("stuid=123; stoken=v2_app; mid=mid-test");
+        using var http = new HttpClient(new Handler(request =>
+        {
+            Assert.Equal(MiyousheClient.RolesByStokenEndpoint, request.RequestUri!.AbsoluteUri);
+            Assert.Equal("2", request.Headers.GetValues("x-rpc-client_type").Single());
+            var ds = request.Headers.GetValues("DS").Single().Split(',');
+            Assert.Equal(MiyousheClient.SignAndroidV1(long.Parse(ds[0]), ds[1]), string.Join(',', ds));
+            var cookie = request.Headers.GetValues("Cookie").Single();
+            Assert.Contains("stoken=v2_app", cookie);
+            Assert.Contains("mid=mid-test", cookie);
+            return Json("""{"retcode":0,"data":{"list":[{"game_biz":"nap_cn","game_uid":"100000001","region":"prod_gf_cn","nickname":"绳匠","region_name":"官方服务器"}]}}""");
+        }));
+        var client = new MiyousheClient(http, "test-device");
+        var roles = await client.GetRolesAsync(account);
+        Assert.Single(roles);
+        Assert.Equal("100000001", roles[0].Uid);
+    }
+
+    [Fact]
+    public async Task DailySignSessionUpdateCookieSyncsRotatedCookieWithoutResettingSchedule()
+    {
+        var seenCookies = new List<string>();
+        var signClient = new StubDailySignClient(c =>
+        {
+            seenCookies.Add(c.Cookie);
+            return new DailySignInfo(false, new DateOnly(2026, 10, 19), Now);
+        });
+        var clock = new Clock(Now);
+        using var session = new DailySignSession(signClient, clock);
+        var account = Credential();
+        session.SetCredential(account);
+        await session.CheckAsync(manual: true);
+        var nextCheck = session.NextCheckAt;
+
+        session.UpdateCookie(account.AccountKey, "account_id=123; cookie_token=rotated-from-browser");
+        session.UpdateCookie("other-account", "account_id=999; cookie_token=wrong");
+        Assert.Equal(nextCheck, session.NextCheckAt);
+
+        clock.Utc = Now.AddSeconds(61);
+        clock.Stamp = TimeSpan.FromSeconds(61).Ticks;
+        await session.CheckAsync(manual: true);
+        Assert.Equal(2, seenCookies.Count);
+        Assert.Contains("cookie_token=rotated-from-browser", seenCookies[1]);
+    }
+
+    private sealed class StubDailySignClient(Func<Credential, DailySignInfo> check) : IDailySignClient
+    {
+        public Task<DailySignInfo> GetDailySignInfoAsync(Credential credential, CancellationToken cancellation = default) =>
+            Task.FromResult(check(credential));
+        public Task<DailySignSubmitResult> SubmitDailySignAsync(Credential credential, CancellationToken cancellation = default) =>
+            Task.FromResult(DailySignSubmitResult.Submitted);
     }
     private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)
     { Content = new StringContent(json, Encoding.UTF8, "application/json") };

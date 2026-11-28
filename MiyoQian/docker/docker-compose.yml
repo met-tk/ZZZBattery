@@ -1,0 +1,25 @@
+services:
+  miyouqian:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: miyouqian
+    restart: unless-stopped
+    init: true
+    ports:
+      - "5890:5890"
+    volumes:
+      # Docker 专用状态卷：配置、登录凭证和日志均保存在容器隔离环境中
+      - miyouqian_state:/app/state
+    environment:
+      - TZ=Asia/Shanghai
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  miyouqian_state:

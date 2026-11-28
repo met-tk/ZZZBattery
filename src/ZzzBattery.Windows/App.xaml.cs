@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -25,6 +26,8 @@ public partial class App : Application
     public MiyousheClient Client { get; private set; } = null!;
     public DailySignSession DailySign { get; private set; } = null!;
     public WallpaperService Wallpapers { get; private set; } = null!;
+    internal MiyoQianBridge? MiyoQian { get; private set; }
+    public bool SmokeMode { get; private set; }
     public bool Demo { get; set; }
     public bool Exiting { get; private set; }
     public EnergySnapshot DemoSnapshot { get; private set; } = null!;
@@ -38,11 +41,16 @@ public partial class App : Application
     private OfficialNoteBrowser? _officialNotes;
     private DailySignWindow? _dailySignWindow;
     private Forms.ToolStripMenuItem? _dailySignMenu;
+    private Forms.ToolStripMenuItem? _miyoQianStatusMenu;
+    private Forms.ToolStripMenuItem? _miyoQianRunMenu;
     private DateTimeOffset _dailySignReadyAt;
+    private DateTimeOffset _nextMiyoQianCheck;
+    private bool _miyoQianPolling;
     private WallpaperWindow? _wallpapers;
     private DateTimeOffset _nextWallpaperCheck;
     private Mutex? _mutex;
     private ReminderState _reminders = new();
+    private readonly object _credentialGate = new();
     private bool _ticking;
     private Task? _smokeTask;
 
@@ -58,6 +66,7 @@ public partial class App : Application
             var placementIndex = Array.IndexOf(e.Args, "--placement-smoke-test");
             var placementSmoke = placementIndex >= 0;
             var smoke = e.Args.Contains("--smoke-test") || uiSmoke || placementSmoke || displaySmoke || backgroundSmoke;
+            SmokeMode = smoke;
             if (smoke && (rootIndex < 0 || rootIndex + 1 >= e.Args.Length))
             {
                 MessageBox.Show("运行检查请使用 --data-dir 指定独立测试目录。", "绝区零桌面电量");
@@ -87,29 +96,42 @@ public partial class App : Application
             Palette.Apply(Settings);
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, AutomaticDecompression = DecompressionMethods.All })
             { Timeout = TimeSpan.FromSeconds(20) };
-            Client = new MiyousheClient(_http, Settings.DeviceId, includeWidget: true);
+            Client = new MiyousheClient(_http, Settings.DeviceId, includeWidget: true, autoDeviceFp: true);
+            Client.RestoreDeviceFingerprints(Settings.AndroidDeviceFp, Settings.WebDeviceFp,
+                Settings.AndroidDeviceFpUpdatedAt, Settings.WebDeviceFpUpdatedAt);
+            Client.DeviceFingerprintChanged += (androidFp, webFp, androidUpdatedAt, webUpdatedAt) => Dispatcher.BeginInvoke(() =>
+            {
+                if (Exiting) return;
+                if (!string.IsNullOrEmpty(androidFp)) Settings.AndroidDeviceFp = androidFp;
+                if (!string.IsNullOrEmpty(webFp)) Settings.WebDeviceFp = webFp;
+                if (androidUpdatedAt is not null) Settings.AndroidDeviceFpUpdatedAt = androidUpdatedAt;
+                if (webUpdatedAt is not null) Settings.WebDeviceFpUpdatedAt = webUpdatedAt;
+                SafeStore(() => Store.Write("settings.json", Settings));
+            });
             Client.VerificationProofChanged += proof => SafeStore(() =>
             {
                 if (proof is null) Store.ClearVerificationProof();
                 else Store.SaveVerificationProof(proof);
             });
-            _officialNotes = new OfficialNoteBrowser(root, () => Store.WebViewProfilePath);
-            Client.CredentialChanged += credential =>
-            {
-                if (credential.Role is null || Session?.Credential is not { Role: not null } active ||
-                    active.AccountKey != credential.AccountKey)
-                    return;
-                active.Cookie = credential.Cookie;
-                if (DailySign?.Credential is { } sign && sign.AccountKey == credential.AccountKey)
-                    sign.Cookie = credential.Cookie;
-                SafeStore(() => Store.SaveCredential(active));
-            };
+            _officialNotes = new OfficialNoteBrowser(Store);
+            _officialNotes.CredentialChanged += ApplyUpdatedCredential;
+            Client.CredentialChanged += ApplyUpdatedCredential;
             Client.CredentialRecovery = async (credential, cancellation) =>
                 await _officialNotes.TryRefreshCredentialAsync(credential, cancellation);
             Session = new WidgetSession(Client, officialNoteReader: _officialNotes.ReadAsync);
             DailySign = new DailySignSession(Client);
             _dailySignReadyAt = DateTimeOffset.UtcNow.AddSeconds(15);
             Demo = e.Args.Contains("--demo");
+            if (!smoke)
+            {
+                MiyoQian = new MiyoQianBridge(Store, () => Settings);
+                MiyoQian.Changed += () => Dispatcher.BeginInvoke(() =>
+                {
+                    if (Exiting) return;
+                    _widget?.Render();
+                    UpdateMiyoQianTrayMenu();
+                });
+            }
             DemoSnapshot = DemoData.Create(DateTimeOffset.UtcNow);
             var credential = Demo || smoke ? null : Store.LoadCredential();
             if (credential is not null)
@@ -175,6 +197,8 @@ public partial class App : Application
             else if (e.Args.Contains("--settings")) OpenSettings();
             else if (e.Args.Contains("--verify")) _ = RefreshAndVerify();
             if (!smoke) _ = RefreshWallpapers();
+            if (!smoke && !Demo && MiyoQian is not null && Settings.MiyoQianEnabled)
+                _ = RefreshMiyoQianAsync(allowAutoStart: Settings.MiyoQianAutoStart);
         }
         catch (Exception error)
         {
@@ -203,8 +227,15 @@ public partial class App : Application
         Add("设置", OpenSettings);
         Add("找回窗口", ShowWidget);
         menu.Items.Add(new Forms.ToolStripSeparator());
+        _miyoQianStatusMenu = new Forms.ToolStripMenuItem("米游签：检查中", null, (_, _) => Dispatcher.Invoke(() => _ = OpenMiyoQianWebAsync()));
+        _miyoQianRunMenu = new Forms.ToolStripMenuItem("执行米游签全部任务", null, (_, _) => Dispatcher.Invoke(() => _ = TriggerMiyoQianAsync()));
+        menu.Items.Add(_miyoQianStatusMenu);
+        menu.Items.Add(_miyoQianRunMenu);
+        Add("打开米游签配置网页", () => _ = OpenMiyoQianWebAsync());
+        menu.Items.Add(new Forms.ToolStripSeparator());
         Add("退出", Quit);
         _tray.ContextMenuStrip = menu;
+        UpdateMiyoQianTrayMenu();
         _tray.Click += () => Dispatcher.Invoke(ToggleVisibility);
         _tray.BalloonClick += () => Dispatcher.Invoke(ShowWidget);
         _tray.SoundFailed += () => Dispatcher.Invoke(() => _widget.SetNotice("自定义提示音不可用，已使用系统声音。请在设置中重新选择 WAV 文件。"));
@@ -287,10 +318,57 @@ public partial class App : Application
         try { Process.Start(new ProcessStartInfo(MiyousheClient.VerificationPageUrl(Session.Credential?.Role)) { UseShellExecute = true }); }
         catch { _widget.SetNotice("无法打开系统浏览器，请从米游社进入绝区零战绩页。"); }
     }
-    public async Task Connect(Credential credential)
+    internal void ApplyUpdatedCredential(Credential credential)
+    {
+        if (Exiting || credential.Role is null) return;
+        lock (_credentialGate)
+        {
+            if (Exiting || Session?.Credential is not { Role: not null } active ||
+                active.AccountKey != credential.AccountKey)
+                return;
+            if (!ReferenceEquals(active, credential))
+            {
+                var incoming = Cookies.Parse(credential.Cookie);
+                Cookies.TryMergeSetCookies(active, incoming.Select(p => p.Key + "=" + p.Value));
+            }
+            DailySign?.UpdateCookie(credential.AccountKey, active.Cookie);
+            SafeStore(() => Store.SaveCredential(active));
+        }
+    }
+
+    internal async Task Connect(Credential credential, OfficialBrowserSession.SavedCookie[]? initialBrowserCookies = null)
     {
         _verification?.Close(); _dailySignWindow?.Close(); Client.ForgetVerification();
-        Store.SaveCredential(credential);
+        var preserveSameAccountSession = false;
+        lock (_credentialGate)
+        {
+            if (Session.Credential is { } previous && previous.AccountKey == credential.AccountKey)
+            {
+                preserveSameAccountSession = true;
+                var incoming = Cookies.Parse(credential.Cookie);
+                if ((incoming.ContainsKey("stoken") || incoming.ContainsKey("stoken_v2")) &&
+                    !incoming.ContainsKey("cookie_token") && !incoming.ContainsKey("cookie_token_v2"))
+                {
+                    var prevFields = Cookies.Parse(previous.Cookie);
+                    var changed = false;
+                    foreach (var key in new[] { "cookie_token_v2", "cookie_token", "ltoken_v2", "ltoken", "ltuid_v2", "ltuid", "account_id_v2", "account_mid_v2", "ltmid_v2" })
+                    {
+                        if (!incoming.ContainsKey(key) && prevFields.TryGetValue(key, out var val) && !string.IsNullOrEmpty(val))
+                        {
+                            incoming[key] = val;
+                            changed = true;
+                        }
+                    }
+                    if (changed)
+                    {
+                        try { credential.Cookie = Cookies.Create(JsonSerializer.Serialize(incoming)).Cookie; }
+                        catch (ArgumentException) { }
+                    }
+                }
+            }
+            Store.SaveCredential(credential);
+            OfficialBrowserSession.UseCredential(credential, Store, initialBrowserCookies, preserveSameAccountSession);
+        }
         Demo = false; _reminders = new();
         Session.SetCredential(credential);
         _officialNotes?.Reset();
@@ -314,12 +392,72 @@ public partial class App : Application
     public async Task SignToday()
     {
         if (Demo) { _widget.SetNotice("当前为演示界面；连接账号后可签到。"); return; }
-        if (Session.Credential?.Role is null || DailySign.Failure?.Kind == FailureKind.Login) { OpenAccount(); return; }
-        if (DailySign.IsSignedToday || DailySign.Busy) return;
-        if (DailySign.Failure?.Kind is FailureKind.Verification or FailureKind.Permission) { OpenDailySignPage(); return; }
+        var syncMiyoQian = MiyoQian is not null && Settings.MiyoQianEnabled && Settings.MiyoQianSyncWithDailySign;
+        Task? miyoTask = syncMiyoQian ? TriggerMiyoQianAsync(fromDailySign: true) : null;
+
+        if (Session.Credential?.Role is null || DailySign.Failure?.Kind == FailureKind.Login)
+        {
+            if (miyoTask is not null) await miyoTask;
+            else OpenAccount();
+            return;
+        }
+        if (DailySign.IsSignedToday || DailySign.Busy)
+        {
+            if (miyoTask is not null) await miyoTask;
+            return;
+        }
+        if (DailySign.Failure?.Kind is FailureKind.Verification or FailureKind.Permission)
+        {
+            OpenDailySignPage();
+            if (miyoTask is not null) await miyoTask;
+            return;
+        }
         await DailySign.SignAsync();
         _widget.SetNotice(DailySign.Message);
         if (DailySign.Failure?.Kind == FailureKind.Verification) OpenDailySignPage();
+        if (miyoTask is not null) await miyoTask;
+    }
+
+    internal async Task RefreshMiyoQianAsync(bool allowAutoStart = false)
+    {
+        if (MiyoQian is null || Exiting || _miyoQianPolling) return;
+        _miyoQianPolling = true;
+        try
+        {
+            var snap = await MiyoQian.RefreshStatusAsync(allowAutoStart);
+            _nextMiyoQianCheck = DateTimeOffset.UtcNow.AddSeconds(snap.Running ? 3 : 25);
+        }
+        catch { _nextMiyoQianCheck = DateTimeOffset.UtcNow.AddSeconds(25); }
+        finally { _miyoQianPolling = false; }
+    }
+
+    internal async Task TriggerMiyoQianAsync(bool fromDailySign = false)
+    {
+        if (MiyoQian is null || Demo) return;
+        var (_, message) = await MiyoQian.TriggerRunAsync();
+        _nextMiyoQianCheck = DateTimeOffset.UtcNow.AddSeconds(3);
+        if (!fromDailySign || DailySign.IsSignedToday || Session.Credential?.Role is null)
+            _widget?.SetNotice(message);
+    }
+
+    internal async Task OpenMiyoQianWebAsync()
+    {
+        if (MiyoQian is null) return;
+        var (opened, message) = await MiyoQian.OpenWebConsoleAsync();
+        if (!opened) _widget?.SetNotice(message);
+        await RefreshMiyoQianAsync();
+    }
+
+    private void UpdateMiyoQianTrayMenu()
+    {
+        if (_miyoQianStatusMenu is null || _miyoQianRunMenu is null) return;
+        var visible = !Demo && !SmokeMode && Settings.MiyoQianEnabled;
+        _miyoQianStatusMenu.Visible = visible;
+        _miyoQianRunMenu.Visible = visible;
+        if (!visible || MiyoQian is null) return;
+        var snap = MiyoQian.Snapshot;
+        _miyoQianStatusMenu.Text = snap.BadgeText;
+        _miyoQianRunMenu.Enabled = snap.CanTrigger && !snap.Running;
     }
     public async Task CheckDailySign()
     {
@@ -339,6 +477,9 @@ public partial class App : Application
     {
         var saved = SafeStore(() => Store.Write("settings.json", Settings));
         Palette.Apply(Settings); _widget.ApplySettings();
+        UpdateMiyoQianTrayMenu();
+        if (!SmokeMode && !Demo)
+            _ = RefreshMiyoQianAsync(allowAutoStart: Settings.MiyoQianEnabled && Settings.MiyoQianAutoStart);
         return saved;
     }
     public void SavePosition() => SafeStore(() => Store.Write("settings.json", Settings));
@@ -364,6 +505,8 @@ public partial class App : Application
             if (!Demo && DateTimeOffset.UtcNow >= _dailySignReadyAt &&
                 Session.Failure?.Kind is not (FailureKind.Login or FailureKind.Verification or FailureKind.Permission or FailureKind.RateLimited))
                 await DailySign.CheckAsync();
+            if (!Demo && !SmokeMode && MiyoQian is not null && Settings.MiyoQianEnabled && DateTimeOffset.UtcNow >= _nextMiyoQianCheck)
+                _ = RefreshMiyoQianAsync();
             if (_widget.IsVisible) _widget.Render();
             if (_dailySignMenu is not null)
             {
@@ -403,7 +546,16 @@ public partial class App : Application
     private bool SafeStore(Action action)
     {
         try { action(); return true; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _widget?.SetNotice("数据目录无法写入，本次设置尚未保存。"); return false; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or CryptographicException)
+        {
+            const string msg = "数据目录无法写入，本次设置尚未保存。";
+            if (_widget is not null)
+            {
+                if (Dispatcher.CheckAccess()) _widget.SetNotice(msg);
+                else Dispatcher.BeginInvoke(() => _widget.SetNotice(msg));
+            }
+            return false;
+        }
     }
     public void Quit() { _widget?.FlushUserPosition(); Exiting = true; Shutdown(); }
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
@@ -413,7 +565,7 @@ public partial class App : Application
     }
     protected override void OnExit(ExitEventArgs e)
     {
-        Exiting = true; _timer?.Stop(); DailySign?.Dispose(); Session?.Dispose(); _officialNotes?.Dispose(); _http?.Dispose(); Wallpapers?.Dispose();
+        Exiting = true; _timer?.Stop(); MiyoQian?.Dispose(); DailySign?.Dispose(); Session?.Dispose(); _officialNotes?.Dispose(); _http?.Dispose(); Wallpapers?.Dispose();
         _tray?.Dispose();
         Store?.CleanupPendingProfiles();
         SystemEvents.PowerModeChanged -= PowerChanged;

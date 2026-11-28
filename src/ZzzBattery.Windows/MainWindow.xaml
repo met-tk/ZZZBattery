@@ -21,6 +21,18 @@
     </StackPanel>
    </Grid>
   </Border>
+  <Border x:Name="CharacterMiyoQianBar" Background="#EE191B1C" CornerRadius="10" Margin="0,6,0,0" Padding="10,4" Visibility="Collapsed">
+   <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Button x:Name="CharacterMiyoQianStatusBtn" Background="Transparent" BorderBrush="Transparent" Padding="0,2" MinHeight="22" HorizontalContentAlignment="Left" Click="MiyoQianWebClick" ToolTipService.ShowOnDisabled="True">
+     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+      <Ellipse x:Name="CharacterMiyoQianDot" Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center" Fill="#A3AAA0"/>
+      <TextBlock x:Name="CharacterMiyoQianText" Text="米游签：检查中" Foreground="#D6DAD5" FontSize="10.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+     </StackPanel>
+    </Button>
+    <Button x:Name="CharacterMiyoQianRunBtn" Grid.Column="1" Content="签到" FontSize="10" Foreground="{DynamicResource AccentText}" Background="Transparent" BorderBrush="{DynamicResource Stroke}" Padding="8,2" MinHeight="22" Margin="6,0,0,0" Click="MiyoQianRunClick" ToolTip="在后台触发米游签全部签到任务"/>
+   </Grid>
+  </Border>
   <Border x:Name="CharacterNoticePanel" Background="{DynamicResource Surface}" CornerRadius="8" Padding="10" Margin="0,6,0,0" Visibility="Collapsed"><TextBlock x:Name="CharacterNotice" Foreground="{DynamicResource Muted}" FontSize="11" TextWrapping="Wrap"/></Border>
   <Button x:Name="CharacterConnect" Content="连接米游社" Style="{StaticResource PrimaryButton}" Margin="0,6,0,0" Click="AccountClick"/>
   <Border x:Name="CharacterNotesBorder" Background="{DynamicResource Surface}" CornerRadius="10" Padding="14,6" Margin="0,6,0,0" Visibility="Collapsed"><local:NotesView x:Name="CharacterNotes"/></Border>
@@ -75,6 +87,18 @@
       <Button x:Name="DetailsButton" Content="今日便笺  ﹀" Grid.Column="1" FontSize="11" Background="Transparent" BorderBrush="Transparent" Padding="5" Click="DetailsClick"/>
      </Grid>
     </Grid>
+    <Border x:Name="ClassicMiyoQianBar" Background="{DynamicResource Panel}" CornerRadius="8" Padding="10,4" Margin="0,8,0,0" Visibility="Collapsed">
+     <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Button x:Name="ClassicMiyoQianStatusBtn" Background="Transparent" BorderBrush="Transparent" Padding="0,2" MinHeight="22" HorizontalContentAlignment="Left" Click="MiyoQianWebClick" ToolTipService.ShowOnDisabled="True">
+       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Ellipse x:Name="ClassicMiyoQianDot" Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center" Fill="#A3AAA0"/>
+        <TextBlock x:Name="ClassicMiyoQianText" Text="米游签：检查中" Foreground="{DynamicResource Ink}" FontSize="11" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+       </StackPanel>
+      </Button>
+      <Button x:Name="ClassicMiyoQianRunBtn" Grid.Column="1" Content="签到" FontSize="10.5" Foreground="{DynamicResource AccentText}" Background="Transparent" BorderBrush="{DynamicResource Stroke}" Padding="8,2" MinHeight="22" Margin="6,0,0,0" Click="MiyoQianRunClick" ToolTip="在后台触发米游签全部签到任务"/>
+     </Grid>
+    </Border>
     <local:NotesView x:Name="NotesPanel" Margin="0,8,0,0" Visibility="Collapsed"/>
    </StackPanel>
    <Grid x:Name="Mini" Visibility="Collapsed" Background="Transparent" MouseLeftButtonDown="DragWindow">

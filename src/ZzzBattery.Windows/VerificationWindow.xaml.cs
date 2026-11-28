@@ -115,7 +115,6 @@ public partial class VerificationWindow : Window
             };
             await ChallengeBrowser.EnsureCoreWebView2Async().WaitAsync(TimeSpan.FromSeconds(20), _cancel.Token);
             if (_closed || ChallengeBrowser.CoreWebView2 is null) return;
-            _browserReady = true;
 
             var core = ChallengeBrowser.CoreWebView2;
             core.Settings.IsPasswordAutosaveEnabled = false;
@@ -125,7 +124,7 @@ public partial class VerificationWindow : Window
 
             core.NavigationStarting += (_, e) =>
             {
-                if (!AllowedNavigation(e.Uri))
+                if (!OfficialNavigationPolicy.IsAllowed(e.Uri))
                 {
                     e.Cancel = true;
                     if (!_closed) ShowPageFailure("无法打开此页面", "官方页面尝试跳转到不支持的地址，可使用系统浏览器继续。");
@@ -154,14 +153,16 @@ public partial class VerificationWindow : Window
                 }
             };
 
-            InjectCookies(core);
+            await OfficialBrowserSession.PrepareAsync(core, _credential, App.Current.Store, _cancel.Token);
+            if (_closed) return;
+            _browserReady = true;
         }
         catch (OperationCanceledException) when (_closed) { }
         catch (TimeoutException)
         {
             if (!_closed) ShowPageFailure("验证浏览器启动超时", "请关闭此窗口后重新打开，或检查 WebView2 运行时。", canReload: false);
         }
-        catch (Exception e) when (e is WebView2RuntimeNotFoundException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        catch (Exception e) when (e is WebView2RuntimeNotFoundException or InvalidOperationException or IOException or UnauthorizedAccessException or CryptographicException or System.Runtime.InteropServices.COMException)
         {
             if (!_closed) ShowPageFailure("无法启动验证浏览器", "请检查 WebView2 运行时，或使用系统浏览器打开。", canReload: false);
         }
@@ -253,51 +254,6 @@ public partial class VerificationWindow : Window
     internal async Task<bool> OfficialContentFitsForCheck() => await ChallengeBrowser.CoreWebView2.ExecuteScriptAsync(
         "(()=>{const e=document.querySelector('.error-block-layout');return !!e&&e.getBoundingClientRect().bottom<=innerHeight+1})()") == "true";
 
-    private void InjectCookies(CoreWebView2 core)
-    {
-        try
-        {
-            OfficialNoteBrowser.InjectCookies(core, _credential);
-        }
-        catch { }
-    }
-
-    private static bool IsGeetestHost(string host) =>
-        host.Equals("geetest.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".geetest.com", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("geevisit.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".geevisit.com", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("geetest.cn", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".geetest.cn", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("geecdn.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".geecdn.com", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsOfficialVendorHost(string host) =>
-        host.EndsWith(".volces.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".byteoversea.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".qbox.me", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("hoyoverse.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".hoyoverse.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".bilibili.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".hdslb.com", StringComparison.OrdinalIgnoreCase);
-
-    private static bool AllowedNavigation(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url)) return true;
-        // Allow inline, data, blob and javascript protocols necessary for Geetest and Vue SPA
-        if (url.StartsWith("about:", StringComparison.OrdinalIgnoreCase) ||
-            url.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
-            url.StartsWith("blob:", StringComparison.OrdinalIgnoreCase) ||
-            url.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
-        if (uri.Scheme != "https" && uri.Scheme != "http") return false;
-
-        var host = uri.Host;
-        return Cookies.IsOfficialHost(host) || IsGeetestHost(host) || IsOfficialVendorHost(host);
-    }
-
     private async Task SwitchToMode(Mode targetMode)
     {
         if (_closed || _completed) return;
@@ -337,7 +293,6 @@ public partial class VerificationWindow : Window
         {
             await EnsureBrowserAsync();
             if (_closed || _completed || !_browserReady) return;
-            InjectCookies(ChallengeBrowser.CoreWebView2);
 
             Status.Text = "正在向米游社获取电量查询的验证任务…";
             _lastCreation = DateTimeOffset.UtcNow;
@@ -365,7 +320,7 @@ public partial class VerificationWindow : Window
                 ShowPageFailure("无法取得快速验证码", e.Message + "也可切换官方便笺页继续。");
             }
         }
-        catch (Exception e) when (e is WebView2RuntimeNotFoundException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        catch (Exception e) when (e is WebView2RuntimeNotFoundException or InvalidOperationException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
         {
             if (!_closed) ShowPageFailure("无法打开验证浏览器", "请检查 WebView2，或使用系统浏览器打开。", canReload: false);
         }
@@ -384,13 +339,13 @@ public partial class VerificationWindow : Window
         {
             await EnsureBrowserAsync();
             if (_closed || _completed || !_browserReady) return;
-            InjectCookies(ChallengeBrowser.CoreWebView2);
+
             _lastPageLoad = DateTimeOffset.UtcNow;
             _noteFeedback = null;
             Status.Text = "正在加载官方便笺页面…";
             ChallengeBrowser.CoreWebView2.Navigate(MiyousheClient.VerificationPageUrl(_credential.Role));
         }
-        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or CryptographicException or System.Runtime.InteropServices.COMException)
         {
             if (!_closed) ShowPageFailure("官方页面加载失败", "请重载页面或使用系统浏览器继续。");
         }
@@ -444,7 +399,7 @@ public partial class VerificationWindow : Window
         if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var requestUri)) return;
         if (MiyousheClient.IsNoteEndpoint(requestUri))
         {
-            if (_readingNote) return;
+            if (_readingNote || !string.Equals(e.Request.Method, "GET", StringComparison.OrdinalIgnoreCase)) return;
             _readingNote = true;
             var receivedAt = DateTimeOffset.UtcNow;
             try
@@ -458,10 +413,16 @@ public partial class VerificationWindow : Window
                 using var stream = await e.Response.GetContentAsync().WaitAsync(TimeSpan.FromSeconds(5), _cancel.Token);
                 using var reader = new StreamReader(stream);
                 var response = await reader.ReadToEndAsync(_cancel.Token).WaitAsync(TimeSpan.FromSeconds(5), _cancel.Token);
-                ApplyNoteCapture(MiyousheClient.ReadOfficialNoteResponse(requestUri, e.Response.StatusCode, response, _credential, receivedAt));
+                var capture = MiyousheClient.ReadOfficialNoteResponse(requestUri, e.Response.StatusCode, response, _credential, receivedAt);
+                if (capture.State == OfficialNoteCaptureState.Ready && !_closed && SameAccount())
+                {
+                    if (await OfficialBrowserSession.SaveAsync(ChallengeBrowser.CoreWebView2, _credential, App.Current.Store, _cancel.Token))
+                        App.Current.ApplyUpdatedCredential(_credential);
+                }
+                ApplyNoteCapture(capture);
             }
             catch (OperationCanceledException) when (_closed) { }
-            catch (Exception error) when (error is IOException or JsonException or InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or JsonException or InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
             {
                 if (!_closed && SameAccount())
                 {
@@ -485,7 +446,7 @@ public partial class VerificationWindow : Window
                     App.Current.Client.SetVerificationProof(_credential, _credential.Role, challenge);
             }
             catch (OperationCanceledException) when (_closed) { }
-            catch (Exception error) when (error is IOException or JsonException or InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or JsonException or InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
             {
                 if (!_closed) WriteRecoveryDiagnostic("proof-unavailable");
             }

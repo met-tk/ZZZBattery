@@ -1,0 +1,58 @@
+<div style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif;color:#102033;">
+  <div style="padding:18px 18px 16px;border-bottom:1px solid #d8e4ef;background:#f1f7fc;">
+    <div style="font-size:13px;color:#0d6ed6;margin-bottom:8px;font-weight:700;">米游签商品兑换通知</div>
+    <div style="font-size:23px;font-weight:800;line-height:1.3;color:#102033;">{{title}}</div>
+    <div style="margin-top:12px;">
+      <span style="display:inline-block;padding:5px 10px;border-radius:999px;background:{{status_bg}};color:{{status_color}};font-size:13px;font-weight:700;">{{status}}</span>
+      <span style="margin-left:10px;color:#627389;font-size:13px;">{{time}}</span>
+    </div>
+  </div>
+
+  <div style="padding:14px 18px 18px;">
+    <!-- 商品信息卡片 -->
+    <div style="border:1px solid #d8e4ef;border-radius:12px;padding:16px;background:#ffffff;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;margin-bottom:14px;">
+        {{icon_html}}
+        <div style="flex:1;">
+          <div style="font-size:18px;font-weight:800;color:#102033;margin-bottom:4px;">{{goods_name}}</div>
+          <div style="font-size:14px;color:#627389;">价格：{{price}} 米游币</div>
+        </div>
+      </div>
+      <div style="border-top:1px solid #edf3f8;padding-top:12px;">
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-size:13px;">
+          <div>
+            <div style="color:#627389;margin-bottom:2px;">执行账号</div>
+            <div style="font-weight:700;color:#102033;">{{account_name}}</div>
+          </div>
+          <div>
+            <div style="color:#627389;margin-bottom:2px;">尝试次数</div>
+            <div style="font-weight:700;color:#102033;">{{attempt}} 次</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 兑换结果卡片 -->
+    <div style="border:1px solid #d8e4ef;border-radius:12px;padding:16px;background:{{status_bg}};">
+      <div style="font-size:16px;font-weight:800;margin-bottom:8px;color:#102033;">兑换结果</div>
+      <div style="font-size:14px;color:#627389;margin-bottom:8px;">{{detail_html}}</div>
+      <div style="font-size:13px;padding:10px;border-radius:8px;background:#ffffff;border:1px solid {{status_color}};">
+        <span style="font-weight:700;color:{{status_color}};">{{message}}</span>
+      </div>{{reschedule_note_html}}
+    </div>
+
+    <!-- 提示信息 -->
+    <div style="margin-top:16px;padding:12px;border-radius:8px;background:#f1f7fc;border:1px solid #d8e4ef;">
+      <div style="font-size:13px;color:#627389;line-height:1.6;">
+        <span style="font-weight:700;color:#102033;">💡 温馨提示：</span>
+        <span style="color:#102033;">{{status_text}}后请到米游社查看订单详情，确认商品兑换状态。</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:16px 18px 20px;border-top:1px solid #d8e4ef;background:#f1f7fc;">
+    <div style="font-size:13px;color:#627389;text-align:center;">
+      米游签 · 米游社商品兑换助手 · {{time}}
+    </div>
+  </div>
+</div>

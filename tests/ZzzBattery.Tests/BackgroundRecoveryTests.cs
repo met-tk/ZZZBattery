@@ -41,20 +41,54 @@ public sealed class BackgroundRecoveryTests
         Assert.Equal(1, client.Calls); Assert.Equal(3, reads);
     }
 
-    [Fact]
-    public async Task HumanChallengeStopsAutomaticWorkIncludingAfterRestartButManualRetryRemainsPossible()
+    [Theory]
+    [InlineData(10035)]
+    [InlineData(10001)]
+    public async Task LoginAndVerificationRetryWithBackoffAcrossRestart(int code)
     {
         var clock = new Clock(); var account = Account(); var client = new Client(); var reads = 0;
-        Task<EnergySnapshot> Read(Credential c, CancellationToken _) { reads++; throw MiyousheClient.FromRetcode(10035); }
+        Task<EnergySnapshot> Read(Credential c, CancellationToken _)
+        {
+            reads++;
+            if (reads <= 3) throw MiyousheClient.FromRetcode(code);
+            return Task.FromResult(Snapshot(c, clock));
+        }
         using var first = new WidgetSession(client, clock, Read);
         first.SetCredential(account); await first.RefreshAsync();
-        Assert.Equal(1, reads); Assert.Equal(FailureKind.Verification, first.Failure?.Kind);
-        for (var i = 0; i < 100; i++) { clock.Advance(TimeSpan.FromMinutes(30)); await first.RefreshAsync(); }
-        Assert.Equal(1, reads); Assert.Equal(1, client.Calls);
+        for (var i = 0; i < 100; i++) await first.RefreshAsync();
+        Assert.Equal(1, reads);
+        clock.Advance(TimeSpan.FromMinutes(15)); await first.RefreshAsync();
+        Assert.Equal(2, reads);
         using var restarted = new WidgetSession(client, clock, Read);
         restarted.SetCredential(account, checkpoint: RoundTrip(first));
-        await restarted.RefreshAsync(); Assert.Equal(1, reads);
-        await restarted.RefreshAsync(true); Assert.Equal(2, reads); Assert.Equal(1, client.Calls);
+        clock.Advance(TimeSpan.FromMinutes(29)); await restarted.RefreshAsync(); Assert.Equal(2, reads);
+        clock.Advance(TimeSpan.FromMinutes(1)); await restarted.RefreshAsync(); Assert.Equal(3, reads);
+        clock.Advance(TimeSpan.FromMinutes(59)); await restarted.RefreshAsync(); Assert.Equal(3, reads);
+        clock.Advance(TimeSpan.FromMinutes(1)); await restarted.RefreshAsync();
+        Assert.Equal(4, reads); Assert.Null(restarted.Failure);
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Theory]
+    [InlineData(FailureKind.Network)]
+    [InlineData(FailureKind.Verification)]
+    public async Task OfflineBootKeepsRetryingUntilNetworkIsReady(FailureKind kind)
+    {
+        var clock = new Clock(); var reads = 0;
+        using var session = new WidgetSession(new Client(), clock, (c, _) =>
+        {
+            if (++reads <= 4) throw new ApiFailure(kind, "Network not ready");
+            return Task.FromResult(Snapshot(c, clock));
+        });
+        session.SetCredential(Account()); await session.RefreshAsync();
+        foreach (var minutes in new[] { 1, 2, 5, 15 })
+        {
+            await session.RefreshAsync();
+            var before = reads;
+            clock.Advance(TimeSpan.FromMinutes(minutes)); await session.RefreshAsync();
+            Assert.Equal(before + 1, reads);
+        }
+        Assert.Equal(5, reads); Assert.Null(session.Failure);
     }
 
     [Fact]
@@ -90,7 +124,6 @@ public sealed class BackgroundRecoveryTests
     }
 
     [Theory]
-    [InlineData(10001)]
     [InlineData(10041)]
     [InlineData(5003)]
     [InlineData(-110)]
@@ -155,19 +188,28 @@ public sealed class BackgroundRecoveryTests
     }
 
     [Fact]
-    public async Task InFlightRecoveryIsCheckpointedSoCrashCannotLoop()
+    public async Task InFlightRecoveryResumesAfterPersistedCooldownWithoutARequestBurst()
     {
         var clock = new Clock(); var client = new Client(); var account = Account();
-        var pending = new TaskCompletionSource<EnergySnapshot>();
+        var pending = new TaskCompletionSource<EnergySnapshot>(); var reads = 0;
         using var session = new WidgetSession(client, clock, (_, _) => pending.Task);
         session.SetCredential(account); var request = session.RefreshAsync();
         var saved = RoundTrip(session);
-        Assert.True(saved.AutomaticRecoveryAttempted); Assert.Equal(FailureKind.Verification, saved.FailureKind);
-        clock.Advance(TimeSpan.FromDays(1));
-        using var restarted = new WidgetSession(client, clock, (_, _) => throw new Exception("Recovery loop"));
-        restarted.SetCredential(account, checkpoint: saved); await restarted.RefreshAsync();
+        Assert.True(saved.AutomaticRecoveryAttempted);
+        using var restarted = new WidgetSession(client, clock, (c, _) => { reads++; return Task.FromResult(Snapshot(c, clock)); });
+        restarted.SetCredential(account, checkpoint: saved); await restarted.RefreshAsync(); Assert.Equal(0, reads);
+        clock.Advance(TimeSpan.FromMinutes(15)); await restarted.RefreshAsync(); Assert.Equal(1, reads);
         pending.SetResult(Snapshot(account, clock)); await request;
-        Assert.Equal(1, client.Calls);
+        Assert.Equal(1, client.Calls); Assert.Null(restarted.Failure);
+    }
+
+    [Fact]
+    public async Task ExpiredLoginFallsBackToSavedBrowserSession()
+    {
+        var clock = new Clock(); var client = new Client { Error = MiyousheClient.FromRetcode(10001) };
+        using var session = new WidgetSession(client, clock, (c, _) => Task.FromResult(Snapshot(c, clock)));
+        session.SetCredential(Account()); await session.RefreshAsync();
+        Assert.Equal(1, client.Calls); Assert.Null(session.Failure); Assert.NotNull(session.Snapshot);
     }
 
     [Fact]

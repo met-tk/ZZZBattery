@@ -20,12 +20,19 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         AdaptiveWindow.Attach(this, 380, 300);
-        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.4.2");
+        VersionText.Text = "v" + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.4.4");
         RefreshSettings();
         AppearanceTab.IsChecked = true;
         Activated += (_, _) => RefreshSettings();
         StateChanged += (_, _) => UpdateChromeState();
-        Closed += (_, _) => _previewSound.Dispose();
+        if (App.Current.MiyoQian is { } bridge)
+            bridge.Changed += OnMiyoQianChanged;
+        Closed += (_, _) =>
+        {
+            _previewSound.Dispose();
+            if (App.Current.MiyoQian is { } b)
+                b.Changed -= OnMiyoQianChanged;
+        };
         KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) Close(); };
         UpdateChromeState();
     }
@@ -78,7 +85,31 @@ public partial class SettingsWindow : Window
         if (expired) AccountText.Text += "\n登录已失效，请重新连接米游社。";
         ConnectButton.Content = credential is null ? "连接米游社" : "连接 / 切换账号";
         SignOutButton.IsEnabled = credential is not null;
+        MiyoQianEnabledBox.IsChecked = settings.MiyoQianEnabled;
+        MiyoQianAutoStartBox.IsChecked = settings.MiyoQianAutoStart;
+        MiyoQianSyncBox.IsChecked = settings.MiyoQianSyncWithDailySign;
+        MiyoQianHideBarBox.IsChecked = settings.MiyoQianHideBar;
+        RefreshMiyoQianView();
         _ready = true;
+    }
+
+    private void OnMiyoQianChanged() => Dispatcher.BeginInvoke(RefreshMiyoQianView);
+
+    private void RefreshMiyoQianView()
+    {
+        var bridge = App.Current.MiyoQian;
+        var snap = bridge?.Snapshot ?? MiyoQianStatusSnapshot.Disabled();
+        MiyoQianStatusText.Text = App.Current.Settings.MiyoQianEnabled ? $"{snap.BadgeText} · {snap.DetailText}" : "状态：已关闭联动";
+        var resolvedPath = bridge?.ProjectDirectory;
+        MiyoQianPathText.Text = string.IsNullOrWhiteSpace(resolvedPath) ? "目录：未检测到 MiyoQian" : "目录：" + resolvedPath;
+        MiyoQianPathText.ToolTip = resolvedPath;
+        if (bridge is not null)
+        {
+            MiyoQianPasswordHint.Text = bridge.HasSavedPassword()
+                ? "已在本机加密保存密码（留空点保存可清除）"
+                : "仅在开启外网访问认证时需要填写，加密保存在本机";
+        }
+        MiyoQianRunButton.IsEnabled = App.Current.Settings.MiyoQianEnabled && snap.CanTrigger && !snap.Running;
     }
 
     private void SectionChanged(object sender, RoutedEventArgs e)
@@ -112,8 +143,13 @@ public partial class SettingsWindow : Window
         settings.Locked = LockedBox.IsChecked == true; settings.ClickThrough = ThroughBox.IsChecked == true;
         settings.ReminderEnabled = ReminderBox.IsChecked == true;
         settings.EnergyReminderEnabled = EnergyReminderBox.IsChecked == true;
+        settings.MiyoQianEnabled = MiyoQianEnabledBox.IsChecked == true;
+        settings.MiyoQianAutoStart = MiyoQianAutoStartBox.IsChecked == true;
+        settings.MiyoQianSyncWithDailySign = MiyoQianSyncBox.IsChecked == true;
+        settings.MiyoQianHideBar = MiyoQianHideBarBox.IsChecked == true;
         if (int.TryParse(MinutesBox.SelectedValue?.ToString(), out var minutes)) settings.ReminderMinutes = minutes;
         Save();
+        RefreshMiyoQianView();
     }
 
     private void EnergyTargetChanged(object sender, TextChangedEventArgs e)
@@ -229,5 +265,53 @@ public partial class SettingsWindow : Window
         catch { }
     }
     private void DoneClick(object sender, RoutedEventArgs e) => Close();
+
+    private void ChooseMiyoQianPathClick(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFolderDialog { Title = "选择包含 main.py 的 MiyoQian 目录" };
+        if (picker.ShowDialog(this) != true) return;
+        if (!MiyoQianLocator.IsProjectDirectory(picker.FolderName))
+        {
+            SetStatus("所选目录中未找到 main.py，请重新选择 MiyoQian 目录。", true);
+            return;
+        }
+        App.Current.Settings.MiyoQianPath = picker.FolderName;
+        Save();
+        RefreshMiyoQianView();
+    }
+
+    private void ResetMiyoQianPathClick(object sender, RoutedEventArgs e)
+    {
+        App.Current.Settings.MiyoQianPath = "";
+        Save();
+        RefreshMiyoQianView();
+    }
+
+    private void SaveMiyoQianPasswordClick(object sender, RoutedEventArgs e)
+    {
+        var bridge = App.Current.MiyoQian;
+        if (bridge is null) return;
+        var password = MiyoQianPasswordBox.Password;
+        bridge.SavePassword(password);
+        MiyoQianPasswordBox.Clear();
+        RefreshMiyoQianView();
+        SetStatus(string.IsNullOrEmpty(password) ? "已清除保存的米游签访问密码。" : "已加密保存米游签访问密码。");
+        _ = App.Current.RefreshMiyoQianAsync();
+    }
+
+    private async void RunMiyoQianClick(object sender, RoutedEventArgs e)
+    {
+        MiyoQianRunButton.IsEnabled = false;
+        var (_, message) = await (App.Current.MiyoQian?.TriggerRunAsync() ?? System.Threading.Tasks.Task.FromResult((false, "当前模式不可用")));
+        SetStatus(message);
+        RefreshMiyoQianView();
+    }
+
+    private async void OpenMiyoQianWebClick(object sender, RoutedEventArgs e)
+    {
+        var (opened, message) = await (App.Current.MiyoQian?.OpenWebConsoleAsync() ?? System.Threading.Tasks.Task.FromResult((false, "当前模式不可用")));
+        SetStatus(message, !opened);
+        RefreshMiyoQianView();
+    }
 }
 

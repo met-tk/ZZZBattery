@@ -12,12 +12,15 @@ using ZzzBattery.Core;
 namespace ZzzBattery.Windows;
 
 // HWND_MESSAGE cannot appear on the desktop or receive foreground focus.
-internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webViewProfilePath = null) : IDisposable
+internal sealed class OfficialNoteBrowser(LocalStore store) : IDisposable
 {
     private CoreWebView2Controller? _controller;
     private string? _accountKey;
     private int _generation;
     private bool _reading;
+    private readonly SemaphoreSlim _initializing = new(1, 1);
+    private string _phase = "idle";
+    public event Action<Credential>? CredentialChanged;
     internal bool InvisibleForCheck => _controller is { IsVisible: false, ParentWindow: var parent } && parent == new IntPtr(-3);
     internal static string ProfileName(Credential credential) =>
         "Energy_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(credential.AccountKey)))[..24];
@@ -33,21 +36,21 @@ internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webView
 
     internal async Task<bool> TryRefreshCredentialAsync(Credential credential, CancellationToken cancellation)
     {
-        var browser = _controller?.CoreWebView2;
-        if (browser is null || _accountKey != credential.AccountKey) return false;
+        if (_reading) return false;
         try
         {
-            var cookies = await browser.CookieManager.GetCookiesAsync(null).WaitAsync(cancellation);
-            var refreshed = Cookies.CreateFromBrowserCookies(cookies
-                .Where(c => Cookies.IsOfficialHost(c.Domain.TrimStart('.')) && Cookies.Allowed.Contains(c.Name))
-                .Select(c => (c.Name, c.Value)));
-            if (refreshed.AccountKey != credential.AccountKey) return false;
-            var changed = !string.Equals(credential.Cookie, refreshed.Cookie, StringComparison.Ordinal);
-            if (changed) credential.Cookie = refreshed.Cookie;
+            var (core, generation) = await EnsureBrowserAsync(credential, cancellation, allowReplace: false);
+            if (generation != _generation || cancellation.IsCancellationRequested) return false;
+            var changed = await OfficialBrowserSession.SaveAsync(core, credential, store, cancellation);
+            if (changed && generation == _generation && !cancellation.IsCancellationRequested)
+                CredentialChanged?.Invoke(credential);
             return changed;
         }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+        { return false; }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or
-            System.Runtime.InteropServices.COMException or OperationCanceledException)
+            System.Runtime.InteropServices.COMException or IOException or UnauthorizedAccessException or
+            CryptographicException or WebView2RuntimeNotFoundException)
         { return false; }
     }
 
@@ -73,10 +76,12 @@ internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webView
         var verificationResponses = 0;
         ulong? navigationId = null;
         void NeedsUser() => completion.TrySetException(new ApiFailure(FailureKind.Verification,
-            "后台恢复未完成，已暂停自动尝试。可在方便时点击“恢复电量同步”处理登录或验证。", verificationCode));
+            "官方页面暂未完成恢复，将在冷却后自动重试。", verificationCode));
+        void TransientFailure(string message) => completion.TrySetException(new ApiFailure(FailureKind.Network, message));
         async void ResponseReceived(object? sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
         {
             if (token.IsCancellationRequested || completion.Task.IsCompleted || readingResponse ||
+                !string.Equals(e.Request.Method, "GET", StringComparison.OrdinalIgnoreCase) ||
                 !Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri) || !MiyousheClient.IsNoteEndpoint(uri)) return;
             // The official page can briefly request its remembered/default role before
             // switching to the selected one. Ignore that response and keep listening.
@@ -90,7 +95,7 @@ internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webView
                 int count;
                 while ((count = await stream.ReadAsync(buffer, token)) > 0)
                 {
-                    if (body.Length + count > 2_000_000) { NeedsUser(); return; }
+                    if (body.Length + count > 2_000_000) { TransientFailure("官方页面响应过大，将自动重试。"); return; }
                     body.Write(buffer, 0, count);
                 }
                 if (token.IsCancellationRequested) return;
@@ -122,63 +127,53 @@ internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webView
                     }
                     completion.TrySetException(new ApiFailure(FailureKind.RateLimited, "官方网页查询正在冷却，稍后再同步。", 429, delay));
                 }
+                else if (capture.State == OfficialNoteCaptureState.HttpError && capture.Code is 401 or 403)
+                {
+                    completion.TrySetException(new ApiFailure(FailureKind.Login, "官方网页登录已失效，请重新连接米游社。", capture.Code));
+                }
+                else if (capture.State == OfficialNoteCaptureState.HttpError)
+                {
+                    TransientFailure($"官方网页便笺请求暂未成功（HTTP {capture.Code}），将自动重试。");
+                }
+                else if (capture.State == OfficialNoteCaptureState.InvalidData)
+                {
+                    TransientFailure("官方网页响应暂不可用，将自动重试。");
+                }
                 else NeedsUser();
             }
             catch (OperationCanceledException) { }
             catch (Exception error) when (error is IOException or InvalidOperationException or System.Runtime.InteropServices.COMException or ArgumentException)
-            { NeedsUser(); }
+            { TransientFailure("后台读取官方网页响应受阻，将自动重试。"); }
             finally { readingResponse = false; }
         }
         void NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
         {
             if (e.Uri == "about:blank") return;
-            if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
-                !uri.IsDefaultPort || uri.UserInfo.Length != 0 || !Cookies.IsOfficialHost(uri.Host))
-            { e.Cancel = true; NeedsUser(); }
+            if (!OfficialNavigationPolicy.IsAllowed(e.Uri))
+            {
+                e.Cancel = true;
+                if (verificationCode is null) TransientFailure("官方页面跳转到受限地址，将自动重试。");
+                else NeedsUser();
+            }
             else navigationId = e.NavigationId;
         }
         void NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
-        { if (e.NavigationId == navigationId && !e.IsSuccess && !completion.Task.IsCompleted) NeedsUser(); }
+        {
+            if (e.NavigationId == navigationId && !e.IsSuccess && !completion.Task.IsCompleted)
+                completion.TrySetException(new ApiFailure(FailureKind.Network, "官方页面暂时无法连接，将自动重试。"));
+        }
         void ProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
         {
             processFailed = true;
-            NeedsUser();
+            completion.TrySetException(new ApiFailure(FailureKind.Network, "后台浏览器已退出，将自动重建并重试。"));
         }
         try
         {
-            if (_accountKey != credential.AccountKey) { Reset(); generation = _generation; _reading = true; }
-            if (_controller is null)
-            {
-                var profileFolder = webViewProfilePath?.Invoke() ?? Path.Combine(dataRoot, "WebViewProfile");
-                var environment = await CoreWebView2Environment.CreateAsync(null, profileFolder).WaitAsync(token);
-                token.ThrowIfCancellationRequested();
-                if (generation != _generation) throw new OperationCanceledException(token);
-                var options = environment.CreateCoreWebView2ControllerOptions();
-                options.ProfileName = ProfileName(credential);
-                var pending = environment.CreateCoreWebView2ControllerAsync(new IntPtr(-3), options);
-                CoreWebView2Controller created;
-                try { created = await pending.WaitAsync(token); }
-                catch { _ = CloseWhenCreated(pending); throw; }
-                if (generation != _generation || token.IsCancellationRequested) { created.Close(); token.ThrowIfCancellationRequested(); throw new OperationCanceledException(); }
-                _controller = created;
-                _accountKey = credential.AccountKey;
-                created.IsVisible = false;
-                created.Bounds = new System.Drawing.Rectangle(0, 0, 480, 800);
-                var browser = created.CoreWebView2;
-                browser.IsMuted = true;
-                browser.Settings.IsPasswordAutosaveEnabled = false;
-                browser.Settings.IsGeneralAutofillEnabled = false;
-                browser.Settings.AreDefaultScriptDialogsEnabled = false;
-                browser.Settings.IsStatusBarEnabled = false;
-                browser.Settings.AreDevToolsEnabled = false;
-                browser.NewWindowRequested += (_, e) => e.Handled = true;
-                browser.DownloadStarting += (_, e) => e.Cancel = true;
-                browser.PermissionRequested += (_, e) => { e.State = CoreWebView2PermissionState.Deny; e.Handled = true; };
-                browser.BasicAuthenticationRequested += (_, e) => e.Cancel = true;
-                browser.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
-                InjectCookies(browser, credential);
-            }
-            core = _controller.CoreWebView2;
+            var (ensuredCore, ensuredGeneration) = await EnsureBrowserAsync(credential, token);
+            core = ensuredCore;
+            generation = ensuredGeneration;
+            if (generation != _generation || token.IsCancellationRequested) throw new OperationCanceledException(token);
+            _reading = true;
             core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
             core.WebResourceResponseReceived += ResponseReceived;
             core.NavigationStarting += NavigationStarting;
@@ -186,18 +181,26 @@ internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webView
             core.ProcessFailed += ProcessFailed;
             configure?.Invoke(core);
             core.Navigate(MiyousheClient.VerificationPageUrl(credential.Role));
-            return await completion.Task.WaitAsync(token);
+            _phase = "reading-note";
+            var snapshot = await completion.Task.WaitAsync(token);
+            if (generation != _generation || token.IsCancellationRequested) throw new OperationCanceledException(token);
+            var saved = await OfficialBrowserSession.SaveAsync(core, credential, store, token);
+            if (generation != _generation || token.IsCancellationRequested) throw new OperationCanceledException(token);
+            if (saved) CredentialChanged?.Invoke(credential);
+            return snapshot;
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
-            throw new ApiFailure(FailureKind.Verification,
-                "后台未能取得电量，已暂停自动尝试。可在方便时点击“恢复电量同步”检查官方页面。", verificationCode);
+            try { store.Write("background-recovery.json", new { phase = _phase, code = verificationCode, at = DateTimeOffset.UtcNow }); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            throw new ApiFailure(verificationCode is null ? FailureKind.Network : FailureKind.Verification,
+                "官方页面读取超时，将在后台自动重试。", verificationCode);
         }
         catch (Exception error) when (error is WebView2RuntimeNotFoundException or InvalidOperationException or
-            System.Runtime.InteropServices.COMException or IOException or UnauthorizedAccessException)
+            System.Runtime.InteropServices.COMException or IOException or UnauthorizedAccessException or CryptographicException)
         {
-            throw new ApiFailure(FailureKind.Verification,
-                "后台浏览器暂不可用，已暂停自动尝试。可点击“恢复电量同步”检查。");
+            throw new ApiFailure(FailureKind.Network,
+                "后台浏览器或会话存储暂不可用，将自动重试。");
         }
         finally
         {
@@ -232,22 +235,75 @@ internal sealed class OfficialNoteBrowser(string dataRoot, Func<string>? webView
         catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
     }
 
-    internal static void InjectCookies(CoreWebView2 core, Credential credential)
+    private async Task<(CoreWebView2 Core, int Generation)> EnsureBrowserAsync(Credential credential, CancellationToken token, bool allowReplace = true)
     {
-        foreach (var (name, value) in Cookies.Parse(credential.Cookie))
-            foreach (var domain in new[] { ".mihoyo.com", ".miyoushe.com", "act.mihoyo.com" })
+        await _initializing.WaitAsync(token);
+        try
+        {
+            if (_accountKey != credential.AccountKey)
             {
-                var cookie = core.CookieManager.CreateCookie(name, value, domain, "/");
-                cookie.IsSecure = true;
-                core.CookieManager.AddOrUpdateCookie(cookie);
+                var reading = _reading;
+                Reset();
+                _reading = reading;
             }
+            var generation = _generation;
+            if (_controller is null)
+            {
+                var profileFolder = store.WebViewProfilePath;
+                _phase = "creating-environment";
+                var environment = await CoreWebView2Environment.CreateAsync(null, profileFolder).WaitAsync(token);
+                token.ThrowIfCancellationRequested();
+                if (generation != _generation) throw new OperationCanceledException(token);
+                var options = environment.CreateCoreWebView2ControllerOptions();
+                options.ProfileName = ProfileName(credential);
+                _phase = "creating-controller";
+                var pending = environment.CreateCoreWebView2ControllerAsync(new IntPtr(-3), options);
+                CoreWebView2Controller created;
+                try { created = await pending.WaitAsync(token); }
+                catch { _ = CloseWhenCreated(pending); throw; }
+                if (generation != _generation || token.IsCancellationRequested) { created.Close(); token.ThrowIfCancellationRequested(); throw new OperationCanceledException(); }
+                _controller = created;
+                _accountKey = credential.AccountKey;
+                created.IsVisible = false;
+                created.Bounds = new System.Drawing.Rectangle(0, 0, 480, 800);
+                var browser = created.CoreWebView2;
+                browser.IsMuted = true;
+                browser.Settings.IsPasswordAutosaveEnabled = false;
+                browser.Settings.IsGeneralAutofillEnabled = false;
+                browser.Settings.AreDefaultScriptDialogsEnabled = false;
+                browser.Settings.IsStatusBarEnabled = false;
+                browser.Settings.AreDevToolsEnabled = false;
+                browser.NewWindowRequested += (_, e) => e.Handled = true;
+                browser.DownloadStarting += (_, e) => e.Cancel = true;
+                browser.PermissionRequested += (_, e) => { e.State = CoreWebView2PermissionState.Deny; e.Handled = true; };
+                browser.BasicAuthenticationRequested += (_, e) => e.Cancel = true;
+                browser.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
+            }
+            var controller = _controller;
+            var core = controller.CoreWebView2;
+            _phase = "restoring-session";
+            await OfficialBrowserSession.PrepareAsync(core, credential, store, token, allowReplace);
+            if (generation != _generation || token.IsCancellationRequested || !ReferenceEquals(_controller, controller))
+                throw new OperationCanceledException(token);
+            return (core, generation);
+        }
+        catch
+        {
+            Reset();
+            throw;
+        }
+        finally { _initializing.Release(); }
     }
 
     public void Reset()
     {
         _generation++;
         _reading = false;
-        _controller?.Close(); _controller = null; _accountKey = null;
+        var controller = _controller;
+        _controller = null;
+        _accountKey = null;
+        try { controller?.Close(); }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
     }
     public void Dispose() => Reset();
 }

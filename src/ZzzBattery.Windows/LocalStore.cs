@@ -104,6 +104,25 @@ public sealed class LocalStore
         try { AtomicWrite("credentials.dpapi", WindowsProtection.Protect(bytes)); }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
+    internal T? ReadProtected<T>(string name)
+    {
+        byte[]? plaintext = null;
+        try
+        {
+            if (!File.Exists(FilePath(name))) return default;
+            plaintext = WindowsProtection.Unprotect(File.ReadAllBytes(FilePath(name)));
+            return JsonSerializer.Deserialize<T>(plaintext);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or JsonException)
+        { return default; }
+        finally { if (plaintext is not null) CryptographicOperations.ZeroMemory(plaintext); }
+    }
+    internal void WriteProtected<T>(string name, T value)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value);
+        try { AtomicWrite(name, WindowsProtection.Protect(bytes)); }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
     public VerificationProof? LoadVerificationProof()
     {
         if (!File.Exists(FilePath("verification.dpapi"))) return null;
@@ -145,7 +164,7 @@ public sealed class LocalStore
     }
     public void ClearAccount()
     {
-        foreach (var name in new[] { "credentials.dpapi", "verification.dpapi", "snapshot.json", "reminders.json", "sync-state.json", "daily-sign.json" })
+        foreach (var name in new[] { "credentials.dpapi", "browser-session.dpapi", "verification.dpapi", "snapshot.json", "reminders.json", "sync-state.json", "daily-sign.json" })
             if (File.Exists(FilePath(name))) File.Delete(FilePath(name));
         var targets = new HashSet<string>(ReadPendingCleanupNames(), StringComparer.OrdinalIgnoreCase) { "WebViewProfile" };
         try

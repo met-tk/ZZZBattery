@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>米游签</title>
+    <link rel="icon" href="/assets/myq_logo_clip.png" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <svg aria-hidden="true" class="icon-sprite">
+      <symbol id="arrow-down" viewBox="0 0 10 6">
+        <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="M8 5v14l11-7z"></path>
+      </symbol>
+      <symbol id="i-save" viewBox="0 0 24 24">
+        <path
+          d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"
+        ></path>
+        <path d="M17 21v-8H7v8M7 3v5h8"></path>
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"></path>
+        <path d="M3 21v-5h5M3 12A9 9 0 0 1 18.4 5.6L21 8"></path>
+        <path d="M21 3v5h-5"></path>
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14"></path>
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15"></path>
+      </symbol>
+      <symbol id="i-qr" viewBox="0 0 24 24">
+        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"></path>
+        <path d="M14 14h2v2h-2zM18 14h2v4h-2zM14 18h4v2h-4z"></path>
+      </symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24">
+        <path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"></path>
+        <path d="M11 18h2"></path>
+      </symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24">
+        <path
+          d="M17.5 19H8a5 5 0 1 1 1.1-9.9A6.5 6.5 0 0 1 21 12.8 3.6 3.6 0 0 1 17.5 19Z"
+        ></path>
+      </symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24">
+        <path d="M12 20h9"></path>
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18M6 6l12 12"></path>
+      </symbol>
+      <symbol id="i-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="8" r="4"></circle>
+        <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"></path>
+      </symbol>
+    </svg>
+
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">
+            <img src="/assets/myq_logo_clip.png" alt="米游签" />
+          </span>
+          <div class="brand-copy">
+            <p class="eyebrow">本地控制台</p>
+            <h1>米游签</h1>
+          </div>
+        </div>
+        <div class="view-switch" role="tablist" aria-label="界面切换">
+          <button
+            class="ghost is-active"
+            data-view="dashboard"
+            type="button"
+            title="签到控制台"
+          >
+            签到
+          </button>
+          <button
+            class="ghost"
+            data-view="shop"
+            type="button"
+            title="店铺商品兑换"
+          >
+            兑换
+          </button>
+        </div>
+        <div class="actions" data-view-actions="dashboard">
+          <button class="ghost" id="refreshBtn" type="button" title="刷新">
+            <svg><use href="#i-refresh"></use></svg>
+            <span>刷新</span>
+          </button>
+          <button class="primary" id="runBtn" type="button" title="立即执行">
+            <svg><use href="#i-play"></use></svg>
+            <span>立即执行</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="view-panel" data-view-panel="dashboard">
+        <section class="status-grid" aria-label="运行状态">
+          <div class="metric">
+            <span>账号</span>
+            <strong id="accountMetric">-</strong>
+          </div>
+          <div class="metric">
+            <span>自动调度</span>
+            <strong id="scheduleMetric">-</strong>
+          </div>
+          <div class="metric">
+            <span>下次执行</span>
+            <strong id="nextRun">-</strong>
+          </div>
+          <div class="metric">
+            <span>最近结果</span>
+            <strong id="lastResult">-</strong>
+          </div>
+        </section>
+
+        <section class="app-layout">
+          <div class="config-column">
+            <details class="panel" data-panel="accounts" open>
+              <summary>
+                <span>
+                  <strong>账号</strong>
+                  <small>添加后登录</small>
+                </span>
+                <span class="disclosure" aria-hidden="true"></span>
+              </summary>
+              <div id="accounts"></div>
+            </details>
+
+            <details class="panel" data-panel="tasks" open>
+              <summary>
+                <span>
+                  <strong>任务配置</strong>
+                  <small>游戏社区、云游戏与米游币任务</small>
+                </span>
+                <span class="disclosure" aria-hidden="true"></span>
+              </summary>
+              <div class="choice-buttons task-buttons" id="taskButtons"></div>
+            </details>
+
+            <details class="panel" data-panel="schedule">
+              <summary>
+                <span>
+                  <strong>每日调度</strong>
+                  <small>自动运行</small>
+                </span>
+                <span class="disclosure" aria-hidden="true"></span>
+              </summary>
+              <label class="check-row">
+                <input id="scheduleEnable" type="checkbox" data-autosave />
+                <span>启用每日自动执行</span>
+              </label>
+              <div class="form-grid two">
+                <label>
+                  <span>执行时间</span>
+                  <input id="scheduleTime" type="time" data-autosave />
+                </label>
+                <label>
+                  <span>随机波动分钟</span>
+                  <input
+                    id="scheduleJitter"
+                    type="number"
+                    min="0"
+                    max="720"
+                    step="1"
+                    data-autosave
+                  />
+                </label>
+              </div>
+              <label class="check-row">
+                <input id="runOnStart" type="checkbox" data-autosave />
+                <span>
+                  程序启动时立即执行一次
+                  <small>仅在程序启动时生效，与每日自动执行无关</small>
+                </span>
+              </label>
+              <label class="check-row is-hidden" id="autostartRow">
+                <input id="autostartEnable" type="checkbox" />
+                <span>
+                  随 Windows 开机后台静默自启
+                  <small>由你自主选择开启或关闭；开启后电脑开机将在后台静默运行，不弹命令行窗口</small>
+                </span>
+              </label>
+            </details>
+
+            <details class="panel" data-panel="push">
+              <summary>
+                <span>
+                  <strong>推送通道</strong>
+                  <small>任务结束后通知，点击通道按钮配置</small>
+                </span>
+                <span class="disclosure" aria-hidden="true"></span>
+              </summary>
+              <div class="choice-buttons" id="pushChannels"></div>
+            </details>
+
+            <details class="panel" data-panel="device">
+              <summary>
+                <span>
+                  <strong>设备信息</strong>
+                  <small>device_id / device_fp 与真机导入</small>
+                </span>
+                <span class="disclosure" aria-hidden="true"></span>
+              </summary>
+              <div id="devicePanel" class="device-panel"></div>
+            </details>
+
+            <details class="panel" data-panel="captcha">
+              <summary>
+                <span>
+                  <strong>验证码识别</strong>
+                  <small>默认关闭，启用请配置打码平台</small>
+                </span>
+                <span class="disclosure" aria-hidden="true"></span>
+              </summary>
+              <div class="form-grid compact">
+                <label>
+                  <span>重试次数</span>
+                  <input
+                    id="captchaMaxRetries"
+                    type="number"
+                    min="1"
+                    max="10"
+                    step="1"
+                    data-autosave
+                  />
+                </label>
+              </div>
+              <div class="push-channel-list" id="captchaChannels"></div>
+            </details>
+          </div>
+
+          <aside class="side-column">
+            <article class="panel log-panel">
+              <div class="panel-head">
+                <div>
+                  <h2>日志</h2>
+                  <p>最近记录</p>
+                </div>
+              </div>
+              <pre id="logs" class="logs"></pre>
+            </article>
+          </aside>
+        </section>
+      </section>
+
+      <section class="view-panel shop-view is-hidden" data-view-panel="shop">
+        <section class="status-grid shop-status" aria-label="商品兑换状态">
+          <div class="metric">
+            <span>自动兑换</span>
+            <strong id="shopScheduleMetric">-</strong>
+          </div>
+          <div class="metric">
+            <span>下次兑换</span>
+            <small id="shopNextTime"></small>
+            <strong id="shopNextRun">-</strong>
+          </div>
+          <div class="metric">
+            <span>商品数量</span>
+            <strong id="shopGoodsMetric">刷新后显示</strong>
+          </div>
+          <div class="metric">
+            <span>计划数量</span>
+            <strong id="shopPlansMetric">-</strong>
+          </div>
+        </section>
+
+        <section class="shop-layout">
+          <div class="shop-main">
+            <article class="panel">
+              <div class="panel-head shop-head">
+                <div>
+                  <h2>店铺商品</h2>
+                  <p>商品图片、兑换时间、库存、价格与限购信息</p>
+                </div>
+                <div class="shop-tools">
+                  <div class="select-wrapper shop-filter-game">
+                    <select id="shopGameFilter" aria-label="商品分区"></select>
+                    <svg class="select-arrow" width="12" height="8" aria-hidden="true">
+                      <use href="#arrow-down"/>
+                    </svg>
+                  </div>
+                  <!-- 新增状态筛选 -->
+                  <div class="select-wrapper shop-filter-status">
+                    <select id="shopStatusFilter" aria-label="商品状态">
+                      <option value="">全部</option>
+                      <option value="sold_out">已售罄</option>
+                      <option value="available">可兑换</option>
+                    </select>
+                    <svg class="select-arrow" width="12" height="8" aria-hidden="true">
+                      <use href="#arrow-down"/>
+                    </svg>
+                  </div>
+                  <button class="ghost" id="shopRefreshBtn" type="button" title="刷新商品">
+                    <svg><use href="#i-refresh"></use></svg>
+                    <span>刷新商品</span>
+                  </button>
+                </div>
+              </div>
+              <div id="shopGoods" class="shop-goods"></div>
+            </article>
+          </div>
+
+          <aside class="shop-side">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>自动兑换</h2>
+                  <p>到点后使用选定账号发送兑换请求</p>
+                </div>
+              </div>
+              <div class="form-grid two compact">
+                <label class="check-row">
+                  <input id="shopEnable" type="checkbox" data-autosave />
+                  <span>启用自动兑换</span>
+                </label>
+                <label class="check-row">
+                  <input id="shopPush" type="checkbox" data-autosave />
+                  <span>推送兑换结果</span>
+                </label>
+              </div>
+              <div class="form-grid two compact">
+                <label>
+                  <span title="0 表示到点只请求一次">到点后重试秒数</span>
+                  <input
+                    id="shopRetrySeconds"
+                    type="number"
+                    min="0"
+                    max="30"
+                    step="0.5"
+                    data-autosave
+                  />
+                </label>
+                <label>
+                  <span>失败重试间隔</span>
+                  <input
+                    id="shopRetryInterval"
+                    type="number"
+                    min="0.05"
+                    max="5"
+                    step="0.05"
+                    data-autosave
+                  />
+                </label>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>兑换计划</h2>
+                  <p>时间为北京时间 · 修改后自动保存</p>
+                </div>
+              </div>
+              <div class="shop-plan-tools">
+                <label class="check-row shop-plan-check">
+                  <input id="shopPlanSelectAll" type="checkbox" aria-label="全选筛选结果" />
+                  <span id="shopSelectedCount">全选</span>
+                </label>
+                <div class="select-wrapper">
+                  <select id="shopPlanFilter" aria-label="计划状态">
+                    <option value="">全部计划</option>
+                    <option value="pending">待执行</option>
+                    <option value="running">进行中</option>
+                    <option value="done">已成功</option>
+                    <option value="attention">需处理</option>
+                    <option value="paused">已暂停</option>
+                  </select>
+                  <svg class="select-arrow" width="12" height="8" aria-hidden="true">
+                    <use href="#arrow-down"/>
+                  </svg>
+                </div>
+                <button class="ghost" id="shopCleanupBtn" type="button" title="删除已成功或已错过时间的计划" disabled>清理</button>
+              </div>
+              <div class="shop-batch-bar is-hidden" id="shopBatchBar">
+                <button class="ghost" type="button" data-shop-batch="enable">启用</button>
+                <button class="ghost" type="button" data-shop-batch="pause">暂停</button>
+                <button class="ghost" type="button" data-shop-batch="account">换账号</button>
+                <button class="ghost" type="button" data-shop-batch="time">改时间</button>
+                <button class="ghost" type="button" data-shop-batch="run">立即执行</button>
+                <button class="ghost" type="button" data-shop-batch="delete">删除</button>
+              </div>
+              <p class="shop-inline-note" id="shopSaveState" role="status"></p>
+              <div id="shopPlans" class="shop-plans"></div>
+            </article>
+          </aside>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/shop.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

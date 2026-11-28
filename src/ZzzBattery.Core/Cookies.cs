@@ -105,6 +105,18 @@ public static class Cookies
     }
 
     // HttpClient is intentionally configured without a shared CookieContainer.
+    public static bool TryMergeBrowserCookies(Credential credential, IEnumerable<(string Name, string Value)> cookies)
+    {
+        try
+        {
+            var refreshed = CreateFromBrowserCookies(cookies);
+            if (refreshed.AccountKey != credential.AccountKey) return false;
+            // The web profile may not contain the app's stoken. Keep unrelated valid credentials.
+            return TryMergeSetCookies(credential, Parse(refreshed.Cookie).Select(p => p.Key + "=" + p.Value));
+        }
+        catch (ArgumentException) { return false; }
+    }
+
     // Merge only allowed Set-Cookie values into the encrypted credential instead.
     public static bool TryMergeSetCookies(Credential credential, IEnumerable<string> setCookies)
     {

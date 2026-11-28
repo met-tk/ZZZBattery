@@ -104,6 +104,17 @@ public sealed class DailySignSession(IDailySignClient client, TimeProvider? cloc
         }
     }
 
+    /// <summary>Updates the active credential cookie after rotation without resetting the sign-in schedule.</summary>
+    public void UpdateCookie(string accountKey, string cookie)
+    {
+        lock (_gate)
+        {
+            if (_disposed || Credential is null || Credential.AccountKey != accountKey || string.IsNullOrEmpty(cookie))
+                return;
+            Credential.Cookie = cookie;
+        }
+    }
+
     public DailySignCheckpoint? CaptureCheckpoint() => Credential?.Role is { } role
         ? new(Credential.AccountKey, role.Key, _clock.GetUtcNow(), _signedDay, _lastCheckedAt,
             RetryAt, NextCheckAt, Failure?.Kind, Failure?.Code, UncertainSubmission)

@@ -134,7 +134,7 @@ public partial class MainWindow : Window
             session.Failure?.Kind == FailureKind.Login ? "重新连接米游社" : "连接米游社";
         var notice = DateTimeOffset.UtcNow < _noticeUntil ? _notice :
             app.Demo ? "这是演示数据。连接自己的米游社账号后即可显示真实电量。" :
-            session.RecoveringInBackground ? session.Message : session.Failure?.Message ?? (projection?.Stale == true ? "电量缓存已过期或时间发生变化，请刷新校准。" :
+            session.RecoveringInBackground || session.Failure is not null ? session.Message : (projection?.Stale == true ? "电量缓存已过期或时间发生变化，请刷新校准。" :
             projection?.Inconsistent == true ? "恢复时间与电量不一致，暂时保留服务端数值。" :
             snapshot is { SupplementMessage.Length: > 0 } ? snapshot.SupplementMessage : null);
         NoticePanel.Visibility = string.IsNullOrEmpty(notice) ? Visibility.Collapsed : Visibility.Visible;
@@ -161,6 +161,37 @@ public partial class MainWindow : Window
             if (!notes.Any(n => n.Group == "活动")) footer += "\n本次接口未提供活动信息。";
             NotesPanel.SetNotes(notes, footer); CharacterNotes.SetNotes(notes, footer);
         }
+        RenderMiyoQian(app);
+    }
+
+    private void RenderMiyoQian(App app)
+    {
+        var show = !app.Demo && !app.SmokeMode && app.Settings.MiyoQianEnabled && !app.Settings.MiyoQianHideBar && app.MiyoQian is not null;
+        var vis = show ? Visibility.Visible : Visibility.Collapsed;
+        CharacterMiyoQianBar.Visibility = vis;
+        ClassicMiyoQianBar.Visibility = vis;
+        if (!show || app.MiyoQian is null) return;
+
+        var snap = app.MiyoQian.Snapshot;
+        var dotBrush = snap.State switch
+        {
+            MiyoQianState.Completed => new SolidColorBrush(Color.FromRgb(74, 222, 128)),
+            MiyoQianState.Running => Brush("Accent"),
+            MiyoQianState.PartialFailure or MiyoQianState.NeedsSetup or MiyoQianState.NeedsPassword or MiyoQianState.Error => Brush("Warning"),
+            _ => Brush("Muted")
+        };
+        CharacterMiyoQianDot.Fill = dotBrush;
+        ClassicMiyoQianDot.Fill = dotBrush;
+        CharacterMiyoQianText.Text = snap.BadgeText;
+        ClassicMiyoQianText.Text = snap.BadgeText;
+        var tip = snap.DetailText + "\n点击即可在浏览器中打开米游签配置网页";
+        CharacterMiyoQianStatusBtn.ToolTip = tip;
+        ClassicMiyoQianStatusBtn.ToolTip = tip;
+        var canRun = snap.CanTrigger && !snap.Running;
+        CharacterMiyoQianRunBtn.IsEnabled = canRun;
+        ClassicMiyoQianRunBtn.IsEnabled = canRun;
+        CharacterMiyoQianRunBtn.Content = snap.Running ? "签到中" : snap.State == MiyoQianState.Completed ? "重签" : "签到";
+        ClassicMiyoQianRunBtn.Content = CharacterMiyoQianRunBtn.Content;
     }
     private void DragWindow(object sender, MouseButtonEventArgs e)
     {
@@ -189,4 +220,6 @@ public partial class MainWindow : Window
     }
     private void SettingsClick(object sender, RoutedEventArgs e) => App.Current.OpenSettings();
     private void HideClick(object sender, RoutedEventArgs e) => Hide();
+    private async void MiyoQianRunClick(object sender, RoutedEventArgs e) => await App.Current.TriggerMiyoQianAsync();
+    private async void MiyoQianWebClick(object sender, RoutedEventArgs e) => await App.Current.OpenMiyoQianWebAsync();
 }

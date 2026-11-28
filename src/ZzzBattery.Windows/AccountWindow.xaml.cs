@@ -199,7 +199,7 @@ public partial class AccountWindow : Window
                 var available = await Browser.CoreWebView2.CookieManager.GetCookiesAsync(null);
                 if (_closed || generation != _generation) return;
                 credential = Cookies.CreateFromBrowserCookies(available
-                    .Where(c => Cookies.IsOfficialHost(c.Domain.TrimStart('.')) && Cookies.Allowed.Contains(c.Name))
+                    .Where(c => Cookies.IsOfficialHost(OfficialBrowserSession.StripLeadingDot(c.Domain)) && Cookies.Allowed.Contains(c.Name))
                     .Select(c => (c.Name, c.Value)));
             }
             Status.Text = "正在验证登录并读取绝区零角色…";
@@ -233,11 +233,18 @@ public partial class AccountWindow : Window
         Status.Text = "正在保存加密凭据并同步电量…";
         try
         {
-            await App.Current.Connect(_candidate);
+            OfficialBrowserSession.SavedCookie[]? browserCookies = null;
+            if (!_import && BrowserReady && Browser.CoreWebView2 is not null)
+            {
+                try { browserCookies = await OfficialBrowserSession.CaptureOfficialCookiesAsync(Browser.CoreWebView2, _candidate, _cancel.Token); }
+                catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+            }
+            await App.Current.Connect(_candidate, browserCookies);
             if (_closed) return;
             ClearSessionCookies();
             App.Current.ShowWidget(); Close();
         }
+        catch (OperationCanceledException) { }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
             if (!_closed) { Status.Text = "凭据保存失败，请检查数据目录权限。"; UseButton.IsEnabled = true; ReadButton.IsEnabled = true; }

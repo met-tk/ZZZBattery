@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+venv/
+config.yaml
+qrcode.png
+*.log
+data/
+logs/
+tests/
+.env
+.env.*
+*.dpapi
+.pytest_cache/
+.ruff_cache/

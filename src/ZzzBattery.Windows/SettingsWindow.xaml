@@ -257,7 +257,52 @@
      <Border Style="{StaticResource SettingsCard}" Padding="16" Margin="0,0,0,18">
       <StackPanel><TextBlock Text="账号保存在本机" FontWeight="SemiBold"/><TextBlock Text="登录凭据使用当前 Windows 用户加密保存。退出登录会清除本机凭据及电量缓存。" Style="{StaticResource SettingsDescription}"/></StackPanel>
      </Border>
-     <Button x:Name="SignOutButton" Content="退出登录" Click="SignOutClick" HorizontalAlignment="Left" Background="Transparent"/>
+     <Button x:Name="SignOutButton" Content="退出登录" Click="SignOutClick" HorizontalAlignment="Left" Background="Transparent" Margin="0,0,0,20"/>
+     <TextBlock Text="米游签附加签到（多游戏 / 米游币）" Style="{StaticResource SettingsCaption}"/>
+     <Border Style="{StaticResource SettingsCard}" Margin="0,0,0,18">
+      <StackPanel>
+       <CheckBox x:Name="MiyoQianEnabledBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" AutomationProperties.Name="启用米游签附加签到">
+        <StackPanel><TextBlock Text="启用米游签附加签到"/><TextBlock Text="以无网页状态方式显示任务是否完成，保留独立运行与调度" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <CheckBox x:Name="MiyoQianAutoStartBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" IsEnabled="{Binding IsChecked, ElementName=MiyoQianEnabledBox}" AutomationProperties.Name="启动小组件时静默启动米游签后台">
+        <StackPanel><TextBlock Text="启动小组件时静默启动米游签后台"/><TextBlock Text="后台无黑框拉起服务，方便直接查询状态与执行签到" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <CheckBox x:Name="MiyoQianSyncBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" IsEnabled="{Binding IsChecked, ElementName=MiyoQianEnabledBox}" AutomationProperties.Name="点击今日签到时同步执行米游签">
+        <StackPanel><TextBlock Text="点击「今日签到」时同步执行米游签"/><TextBlock Text="在原有绝区零签到的基础上，附带触发米游签全部任务" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <CheckBox x:Name="MiyoQianHideBarBox" Style="{StaticResource SettingsToggle}" Checked="Changed" Unchecked="Changed" IsEnabled="{Binding IsChecked, ElementName=MiyoQianEnabledBox}" AutomationProperties.Name="隐藏桌面组件中的米游签状态栏">
+        <StackPanel><TextBlock Text="隐藏桌面组件中的米游签状态栏"/><TextBlock Text="不在小组件底部显示米游签栏目，仍保留同步签到、托盘及设置入口" Style="{StaticResource SettingsDescription}"/></StackPanel>
+       </CheckBox>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <Grid Margin="14">
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel Margin="0,0,12,0" VerticalAlignment="Center">
+         <TextBlock x:Name="MiyoQianStatusText" Text="状态：检查中" FontWeight="SemiBold" TextWrapping="Wrap"/>
+         <TextBlock x:Name="MiyoQianPathText" Style="{StaticResource SettingsDescription}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+        <Button Grid.Column="1" Content="选择目录" Click="ChooseMiyoQianPathClick" VerticalAlignment="Center" Margin="0,0,6,0"/>
+        <Button Grid.Column="2" Content="自动检测" Click="ResetMiyoQianPathClick" VerticalAlignment="Center"/>
+       </Grid>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <Grid Margin="14">
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="150"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel Margin="0,0,12,0" VerticalAlignment="Center">
+         <TextBlock Text="访问密码（可选）"/>
+         <TextBlock x:Name="MiyoQianPasswordHint" Text="仅在开启外网访问认证时需要填写，加密保存在本机" Style="{StaticResource SettingsDescription}"/>
+        </StackPanel>
+        <PasswordBox x:Name="MiyoQianPasswordBox" Grid.Column="1" VerticalAlignment="Center" MinHeight="34" Padding="8,6" Background="{DynamicResource Surface}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Stroke}" Margin="0,0,6,0"/>
+        <Button Grid.Column="2" Content="保存密码" Click="SaveMiyoQianPasswordClick" VerticalAlignment="Center"/>
+       </Grid>
+       <Border Style="{StaticResource SettingsDivider}"/>
+       <WrapPanel Margin="14">
+        <Button x:Name="MiyoQianRunButton" Content="立即执行米游签" Click="RunMiyoQianClick" IsEnabled="{Binding IsChecked, ElementName=MiyoQianEnabledBox}" Margin="0,0,8,0"/>
+        <Button Content="打开米游签配置网页" Click="OpenMiyoQianWebClick" Style="{StaticResource PrimaryButton}"/>
+       </WrapPanel>
+      </StackPanel>
+     </Border>
     </StackPanel>
    </Grid>
   </ScrollViewer>

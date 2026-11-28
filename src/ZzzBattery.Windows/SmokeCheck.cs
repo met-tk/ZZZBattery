@@ -34,8 +34,10 @@ internal static class SmokeCheck
                 throw new Exception("Plaintext verification proof leak");
             isolated.Write("sync-state.json", new SyncCheckpoint(sample.AccountKey, sample.Role.Key, DateTimeOffset.UtcNow,
                 TimeSpan.FromMinutes(15), TimeSpan.Zero, FailureKind.Verification, 10035));
+            OfficialBrowserSession.UseCredential(sample, isolated);
             isolated.ClearAccount();
-            if (File.Exists(Path.Combine(isolated.Root, "sync-state.json")) || isolated.LoadCredential() is not null)
+            if (File.Exists(Path.Combine(isolated.Root, "sync-state.json")) ||
+                File.Exists(Path.Combine(isolated.Root, "browser-session.dpapi")) || isolated.LoadCredential() is not null)
                 throw new Exception("Sign out did not clear credentials and sync state");
             var lockedDir = isolated.WebViewProfilePath;
             Directory.CreateDirectory(lockedDir);

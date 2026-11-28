@@ -12,12 +12,18 @@ public interface IMiyousheClient
     Task<EnergySnapshot> GetNoteAsync(Credential credential, GameRole role, CancellationToken cancellation = default);
 }
 
-public sealed partial class MiyousheClient(HttpClient http, string deviceId, bool includeWidget = false) : IMiyousheClient, IDailySignClient
+public sealed partial class MiyousheClient(HttpClient http, string deviceId, bool includeWidget = false, bool autoDeviceFp = false) : IMiyousheClient, IDailySignClient
 {
     public const string NoteEndpoint = "https://api-takumi-record.mihoyo.com/event/game_record_zzz/api/zzz/note";
     public const string RolesEndpoint = "https://api-takumi.mihoyo.com/binding/api/getUserGameRolesByCookie";
+    public const string RolesByStokenEndpoint = "https://api-takumi.miyoushe.com/binding/api/getUserGameRolesByStoken";
     public const string WidgetEndpoint = "https://api-takumi-record.mihoyo.com/event/game_record_zzz/api/zzz/widget";
-    public const string WidgetAppVersion = "2.115.0";
+    public const string WidgetAppVersion = "2.119.2";
+    public const string PassportSdkVersion = "2.44.0";
+    public const string AndroidDsSalt = "t0qEgfub6cvueAPgR5m9aQWWVciEer7v";
+    public const string AndroidDs1Salt = "24cf11fb14a84f0683e7cadf7c788ba2";
+    public const string PassportDsSalt = "JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS";
+    private static readonly string ProcessLifecycleId = Guid.NewGuid().ToString();
     private readonly Dictionary<string, (IReadOnlyList<GameRole> Roles, DateTimeOffset At)> _roles = new();
     private readonly Dictionary<string, DateTimeOffset> _widgetBackoff = new();
     // The Windows host persists changed cookies and may provide a silent WebView
@@ -30,40 +36,155 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
         string.Join("&", fields.OrderBy(p => p.Key, StringComparer.Ordinal)
             .Select(p => Uri.EscapeDataString(p.Key) + "=" + Uri.EscapeDataString(p.Value)));
 
-    public static string Sign(string query, long timestamp, int nonce, string body = "")
+    private static string SignWithSalt(string salt, string query, long timestamp, int nonce, string body = "")
     {
-        var digest = MD5.HashData(Encoding.UTF8.GetBytes($"salt={DsSalt}&t={timestamp}&r={nonce}&b={body}&q={query}"));
+        var digest = MD5.HashData(Encoding.UTF8.GetBytes($"salt={salt}&t={timestamp}&r={nonce}&b={body}&q={query}"));
         return $"{timestamp},{nonce},{Convert.ToHexString(digest).ToLowerInvariant()}";
     }
 
+    public static string Sign(string query, long timestamp, int nonce, string body = "") =>
+        SignWithSalt(DsSalt, query, timestamp, nonce, body);
+
+    public static string SignAndroid(string query, long timestamp, int nonce, string body = "") =>
+        SignWithSalt(AndroidDsSalt, query, timestamp, nonce, body);
+
+    public static string SignAndroidV1(long timestamp, string nonce)
+    {
+        var digest = MD5.HashData(Encoding.UTF8.GetBytes($"salt={AndroidDs1Salt}&t={timestamp}&r={nonce}"));
+        return $"{timestamp},{nonce},{Convert.ToHexString(digest).ToLowerInvariant()}";
+    }
+
+    public static string SignPassport(string body, long timestamp, string nonce, string query = "")
+    {
+        var digest = MD5.HashData(Encoding.UTF8.GetBytes($"salt={PassportDsSalt}&t={timestamp}&r={nonce}&b={body}&q={query}"));
+        return $"{timestamp},{nonce},{Convert.ToHexString(digest).ToLowerInvariant()}";
+    }
+
+    private static string RandomDs1Nonce() => RandomNumberGenerator.GetString("0123456789abcdefghijklmnop", 6);
+
+    private static string RandomPassportNonce() => RandomNumberGenerator.GetString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890", 6);
+
+    private static string BuildAppCookie(Credential credential)
+    {
+        if (string.IsNullOrWhiteSpace(credential.Cookie)) return "";
+        var fields = Cookies.Parse(credential.Cookie);
+        if (!fields.TryGetValue("stoken", out var stoken) && !fields.TryGetValue("stoken_v2", out stoken))
+            return "";
+        var parts = new List<string>(3);
+        var stuid = fields.GetValueOrDefault("stuid") ?? fields.GetValueOrDefault("stuid_v2") ??
+            fields.GetValueOrDefault("account_id") ?? fields.GetValueOrDefault("account_id_v2");
+        if (!string.IsNullOrEmpty(stuid)) parts.Add("stuid=" + stuid);
+        parts.Add("stoken=" + stoken);
+        var mid = fields.GetValueOrDefault("mid") ?? fields.GetValueOrDefault("account_mid_v2") ?? fields.GetValueOrDefault("ltmid_v2");
+        if (!string.IsNullOrEmpty(mid)) parts.Add("mid=" + mid);
+        return string.Join("; ", parts) + ";";
+    }
+
     private async Task<JsonElement> GetAsync(string endpoint, string query, Credential credential, CancellationToken cancellation,
-        string? requestBody = null, IReadOnlyDictionary<string, string>? extraHeaders = null, bool verificationEnvelope = false)
+        string? requestBody = null, IReadOnlyDictionary<string, string>? extraHeaders = null, bool verificationEnvelope = false,
+        bool androidAppProfile = false, bool passportProfile = false, bool allowStokenRecovery = true, bool sendCookie = true)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
         var token = deadline.Token;
         var recoveryAttempted = false;
         var credentialUpdated = false;
+        async Task<bool> TryRecoverAsync()
+        {
+            if (recoveryAttempted || androidAppProfile || passportProfile || string.IsNullOrEmpty(credential.AccountKey))
+                return false;
+            recoveryAttempted = true;
+            if (allowStokenRecovery)
+            {
+                try
+                {
+                    if (await RefreshCookieTokenByStokenAsync(credential, token, force: true))
+                    {
+                        if (!cancellation.IsCancellationRequested) CredentialChanged?.Invoke(credential);
+                        return true;
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { }
+                catch (Exception error) when (error is ApiFailure or IOException or InvalidOperationException or ArgumentException or CryptographicException) { }
+            }
+            if (CredentialRecovery is not { } recover) return false;
+            var before = credential.Cookie;
+            try
+            {
+                var recovered = await recover(credential, token);
+                if (!cancellation.IsCancellationRequested && before != credential.Cookie)
+                    CredentialChanged?.Invoke(credential);
+                return recovered;
+            }
+            catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { return false; }
+            catch (Exception error) when (error is ApiFailure or IOException or InvalidOperationException or CryptographicException) { return false; }
+        }
         try
         {
         while (true)
         {
+            var useAndroidFp = androidAppProfile || passportProfile;
+            var deviceFp = autoDeviceFp
+                ? await EnsureDeviceFpAsync(useAndroidFp, token)
+                : GetCachedDeviceFp(useAndroidFp);
             using var request = new HttpRequestMessage(requestBody is null ? HttpMethod.Get : HttpMethod.Post, endpoint + (query.Length > 0 ? "?" + query : ""));
             if (requestBody is not null) request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-            if (credential.Cookie.Length > 0) request.Headers.Add("Cookie", credential.Cookie);
-            request.Headers.Add("DS", Sign(query, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), RandomNumberGenerator.GetInt32(100001, 200001), requestBody ?? ""));
-            // The widget server gates activity_list by the app version, even when the
-            // older profile otherwise returns retcode 0 and valid daily-state fields.
-            request.Headers.Add("x-rpc-app_version", endpoint == WidgetEndpoint ? WidgetAppVersion : "2.11.1");
-            request.Headers.Add("x-rpc-client_type", "5");
-            request.Headers.Add("x-rpc-device_id", deviceId);
-            request.Headers.Add("x-rpc-language", "zh-cn");
-            request.Headers.Add("x-rpc-platform", "4");
-            request.Headers.Referrer = new Uri(endpoint.Contains("game_record_zzz", StringComparison.OrdinalIgnoreCase) || endpoint.Contains("toolcomsrv", StringComparison.OrdinalIgnoreCase)
-                ? "https://act.mihoyo.com/app/mihoyo-zzz-game-record/m.html" : "https://webstatic.mihoyo.com/");
-            request.Headers.Add("Origin", "https://act.mihoyo.com");
-            request.Headers.UserAgent.ParseAdd(endpoint == WidgetEndpoint ? $"Mozilla/5.0 miHoYoBBS/{WidgetAppVersion}" :
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36");
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nonce = RandomNumberGenerator.GetInt32(100001, 200001);
+            if (androidAppProfile)
+            {
+                if (sendCookie)
+                {
+                    var appCookie = BuildAppCookie(credential);
+                    if (appCookie.Length > 0) request.Headers.Add("Cookie", appCookie);
+                }
+                request.Headers.Add("DS", SignAndroid(query, timestamp, nonce, requestBody ?? ""));
+                request.Headers.Add("x-rpc-app_version", WidgetAppVersion);
+                request.Headers.Add("x-rpc-client_type", "2");
+                request.Headers.Add("x-rpc-app_id", "bll8iq97cem8");
+                request.Headers.Add("x-rpc-sys_version", "14");
+                request.Headers.Add("x-rpc-channel", "mihoyo");
+                request.Headers.Add("x-rpc-device_id", deviceId);
+                request.Headers.Add("x-rpc-device_name", "Pixel 8");
+                request.Headers.Add("x-rpc-device_model", "Pixel 8");
+                request.Headers.Add("x-rpc-language", "zh-cn");
+                if (!string.IsNullOrEmpty(deviceFp)) request.Headers.Add("x-rpc-device_fp", deviceFp);
+                request.Headers.Referrer = new Uri("https://app.mihoyo.com");
+                request.Headers.UserAgent.ParseAdd($"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 miHoYoBBS/{WidgetAppVersion}");
+            }
+            else if (passportProfile)
+            {
+                if (sendCookie && credential.Cookie.Length > 0)
+                {
+                    var appCookie = BuildAppCookie(credential);
+                    request.Headers.Add("Cookie", appCookie.Length > 0 ? appCookie : credential.Cookie);
+                }
+                request.Headers.Add("DS", Sign(query, timestamp, nonce, requestBody ?? ""));
+                request.Headers.Add("x-rpc-app_version", WidgetAppVersion);
+                request.Headers.Add("x-rpc-client_type", "2");
+                request.Headers.Add("x-rpc-device_id", deviceId);
+                request.Headers.Add("x-rpc-language", "zh-cn");
+                if (!string.IsNullOrEmpty(deviceFp)) request.Headers.Add("x-rpc-device_fp", deviceFp);
+                request.Headers.Referrer = new Uri("https://app.mihoyo.com");
+                request.Headers.UserAgent.ParseAdd($"Mozilla/5.0 miHoYoBBS/{WidgetAppVersion}");
+            }
+            else
+            {
+                if (sendCookie && credential.Cookie.Length > 0) request.Headers.Add("Cookie", credential.Cookie);
+                request.Headers.Add("DS", Sign(query, timestamp, nonce, requestBody ?? ""));
+                // The widget server gates activity_list by the app version, even when the
+                // older profile otherwise returns retcode 0 and valid daily-state fields.
+                request.Headers.Add("x-rpc-app_version", WidgetAppVersion);
+                request.Headers.Add("x-rpc-client_type", "5");
+                request.Headers.Add("x-rpc-device_id", deviceId);
+                request.Headers.Add("x-rpc-language", "zh-cn");
+                request.Headers.Add("x-rpc-platform", "4");
+                if (!string.IsNullOrEmpty(deviceFp)) request.Headers.Add("x-rpc-device_fp", deviceFp);
+                request.Headers.Referrer = new Uri(endpoint.Contains("game_record_zzz", StringComparison.OrdinalIgnoreCase) || endpoint.Contains("toolcomsrv", StringComparison.OrdinalIgnoreCase)
+                    ? "https://act.mihoyo.com/app/mihoyo-zzz-game-record/m.html" : "https://webstatic.mihoyo.com/");
+                request.Headers.Add("Origin", "https://act.mihoyo.com");
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36");
+            }
             request.Headers.Accept.ParseAdd("application/json");
             if (extraHeaders is not null)
                 foreach (var header in extraHeaders)
@@ -72,23 +193,8 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
                     request.Headers.Add(header.Key, header.Value);
                 }
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden &&
-                !recoveryAttempted && CredentialRecovery is { } recover)
-            {
-                recoveryAttempted = true;
-                var beforeRecover = credential.Cookie;
-                bool recovered = false;
-                try { recovered = await recover(credential, token); }
-                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { }
-                catch (Exception error) when (error is ApiFailure or IOException or InvalidOperationException)
-                { }
-                if (recovered)
-                {
-                    if (!string.Equals(beforeRecover, credential.Cookie, StringComparison.Ordinal))
-                        credentialUpdated = true;
-                    continue;
-                }
-            }
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden && await TryRecoverAsync())
+                continue;
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 var delay = response.Headers.RetryAfter?.Delta ??
@@ -103,6 +209,7 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
                 throw new ApiFailure(FailureKind.Protocol, "服务器响应过大，请稍后重试。");
             if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
             {
+                cancellation.ThrowIfCancellationRequested();
                 var before = credential.Cookie;
                 if (Cookies.TryMergeSetCookies(credential, setCookies) &&
                     !string.Equals(before, credential.Cookie, StringComparison.Ordinal))
@@ -111,8 +218,11 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
             if (credentialUpdated)
             {
                 credentialUpdated = false;
-                try { CredentialChanged?.Invoke(credential); }
-                catch { /* Persistence failure must not turn a successful request into an error. */ }
+                if (!cancellation.IsCancellationRequested)
+                {
+                    try { CredentialChanged?.Invoke(credential); }
+                    catch { /* Persistence failure must not turn a successful request into an error. */ }
+                }
             }
             await using var stream = await response.Content.ReadAsStreamAsync(token);
             using var body = new MemoryStream();
@@ -133,6 +243,8 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
             if (code is null) throw new ApiFailure(FailureKind.Protocol, "服务器返回了无法识别的数据。");
             if (code != 0)
             {
+                // Expired sessions usually arrive in a successful HTTP response with a login retcode.
+                if (FromRetcode(code.Value).Kind == FailureKind.Login && await TryRecoverAsync()) continue;
                 if (endpoint == DailySignInfoEndpoint || endpoint == DailySignSubmitEndpoint)
                     throw DailySignFailure(code.Value);
                 var failure = FromRetcode(code.Value);
@@ -172,9 +284,42 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
         _ => new(FailureKind.Protocol, $"米游社返回错误（代码 {code}），已保留上次数据，稍后重试。", code)
     };
 
+    private Task<JsonElement> GetRolesByStokenAsync(Credential credential, CancellationToken cancellation) =>
+        GetAsync(RolesByStokenEndpoint, "", credential, cancellation,
+            extraHeaders: new Dictionary<string, string>
+            {
+                ["DS"] = SignAndroidV1(DateTimeOffset.UtcNow.ToUnixTimeSeconds(), RandomDs1Nonce())
+            },
+            androidAppProfile: true, allowStokenRecovery: false);
+
     public async Task<IReadOnlyList<GameRole>> GetRolesAsync(Credential credential, CancellationToken cancellation = default)
     {
-        var data = await GetAsync(RolesEndpoint, "game_biz=nap_cn", credential, cancellation);
+        var fields = Cookies.Parse(credential.Cookie);
+        var hasCookieToken = fields.ContainsKey("cookie_token") || fields.ContainsKey("cookie_token_v2");
+        var hasStoken = (fields.ContainsKey("stoken") || fields.ContainsKey("stoken_v2")) &&
+            (!string.IsNullOrEmpty(fields.GetValueOrDefault("mid")) ||
+             !string.IsNullOrEmpty(fields.GetValueOrDefault("account_mid_v2")) ||
+             !string.IsNullOrEmpty(fields.GetValueOrDefault("ltmid_v2")));
+        JsonElement data;
+        if (hasCookieToken)
+        {
+            try
+            {
+                data = await GetAsync(RolesEndpoint, "game_biz=nap_cn", credential, cancellation);
+            }
+            catch (ApiFailure error) when (hasStoken && error.Kind is FailureKind.Login or FailureKind.Protocol)
+            {
+                data = await GetRolesByStokenAsync(credential, cancellation);
+            }
+        }
+        else if (hasStoken)
+        {
+            data = await GetRolesByStokenAsync(credential, cancellation);
+        }
+        else
+        {
+            data = await GetAsync(RolesEndpoint, "game_biz=nap_cn", credential, cancellation);
+        }
         var roles = new List<GameRole>();
         if (data.TryGetProperty("list", out var list) && list.ValueKind == JsonValueKind.Array)
             foreach (var item in list.EnumerateArray())
@@ -252,8 +397,8 @@ public sealed partial class MiyousheClient(HttpClient http, string deviceId, boo
             ? cached.Roles : await GetRolesAsync(credential, cancellation);
         if (roles.Count != 1 || roles[0].Key != role.Key)
             throw new ApiFailure(FailureKind.Permission, "账号绑定了多个角色，活动补充数据无法确认归属；当前仅显示所选角色的实时便笺。", -90001);
-        var query = Query(new Dictionary<string, string> { ["role_id"] = role.Uid, ["server"] = role.Server, ["version"] = "WV_V2" });
-        try { return await GetAsync(WidgetEndpoint, query, credential, cancellation, extraHeaders: VerificationHeaders(credential, role)); }
+        var query = Query(new Dictionary<string, string> { ["version"] = "WV_V2" });
+        try { return await GetAsync(WidgetEndpoint, query, credential, cancellation, extraHeaders: VerificationHeaders(credential, role), androidAppProfile: true); }
         catch (ApiFailure error) when (error.Kind == FailureKind.RateLimited)
         {
             _widgetBackoff[credential.AccountKey] = DateTimeOffset.UtcNow + (error.RetryAfter ?? TimeSpan.FromMinutes(15));

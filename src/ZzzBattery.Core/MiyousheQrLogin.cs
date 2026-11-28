@@ -21,21 +21,43 @@ public sealed partial class MiyousheClient
 {
     public const string QrCreateEndpoint = "https://passport-api.mihoyo.com/account/ma-cn-passport/app/createQRLogin";
     public const string QrQueryEndpoint = "https://passport-api.mihoyo.com/account/ma-cn-passport/app/queryQRLoginStatus";
-    public const string CookieExchangeEndpoint = "https://passport-api.mihoyo.com/account/auth/api/getCookieAccountInfoBySToken";
-    private const string PassportVersion = "2.115.0";
-    private static Dictionary<string, string> PassportHeaders(string clientType = "3") => new()
+    public const string TokenExchangeEndpoint = "https://passport-api.mihoyo.com/account/ma-cn-session/app/exchange";
+    public const string CookieExchangeEndpoint = TokenExchangeEndpoint;
+    public const string LTokenExchangeEndpoint = TokenExchangeEndpoint;
+    private const int AccountMismatchCode = -90002;
+
+    private static Dictionary<string, string> PassportHeaders(string clientType = "3")
     {
-        ["User-Agent"] = $"Mozilla/5.0 miHoYoBBS/{PassportVersion} Capture/2.2.0",
-        ["x-rpc-client_type"] = clientType, ["x-rpc-app_version"] = PassportVersion,
-        ["x-rpc-sdk_version"] = PassportVersion, ["x-rpc-account_version"] = PassportVersion,
-        ["x-rpc-app_id"] = "bll8iq97cem8", ["x-rpc-game_biz"] = "bbs_cn",
-        ["x-rpc-device_name"] = "ZZZBattery Windows", ["x-rpc-device_model"] = "Windows PC"
-    };
+        var headers = new Dictionary<string, string>
+        {
+            ["User-Agent"] = $"Mozilla/5.0 miHoYoBBS/{WidgetAppVersion}",
+            ["x-rpc-client_type"] = clientType,
+            ["x-rpc-app_version"] = WidgetAppVersion,
+            ["x-rpc-sdk_version"] = PassportSdkVersion,
+            ["x-rpc-account_version"] = PassportSdkVersion,
+            ["x-rpc-app_id"] = "bll8iq97cem8",
+            ["x-rpc-game_biz"] = "bbs_cn",
+            ["x-rpc-lifecycle_id"] = ProcessLifecycleId
+        };
+        if (clientType == "2")
+        {
+            headers["x-rpc-device_name"] = "Pixel+8";
+            headers["x-rpc-device_model"] = "Pixel 8";
+            headers["x-rpc-sys_version"] = "14";
+        }
+        else
+        {
+            headers["x-rpc-device_name"] = "ZZZBattery+Windows";
+            headers["x-rpc-device_model"] = "x86_64";
+            headers["x-rpc-device_os"] = "Windows 11 Version 2009";
+        }
+        return headers;
+    }
 
     public async Task<QrLoginTicket> CreateQrLoginAsync(CancellationToken cancellation = default)
     {
         var data = await GetAsync(QrCreateEndpoint, "", new Credential(), cancellation,
-            requestBody: "{}", extraHeaders: PassportHeaders());
+            requestBody: "{}", extraHeaders: PassportHeaders(), passportProfile: true, allowStokenRecovery: false);
         var ticket = JsonValue.String(data, "ticket");
         var url = JsonValue.String(data, "url");
         if (!IsSafeVerificationValue(ticket, 512) || url.Length > 4096 ||
@@ -53,7 +75,8 @@ public sealed partial class MiyousheClient
         try
         {
             data = await GetAsync(QrQueryEndpoint, "", new Credential(), cancellation,
-                requestBody: JsonSerializer.Serialize(new { ticket = ticket.Ticket }), extraHeaders: PassportHeaders());
+                requestBody: JsonSerializer.Serialize(new { ticket = ticket.Ticket }), extraHeaders: PassportHeaders(),
+                passportProfile: true, allowStokenRecovery: false);
         }
         catch (ApiFailure error) when (error.Code == -106) { return new(QrLoginState.Expired); }
         var state = JsonValue.String(data, "status");
@@ -91,21 +114,104 @@ public sealed partial class MiyousheClient
         return new(QrLoginState.Confirmed, credential);
     }
 
-    // The app QR may return only stoken. Exchange it on the official passport service
-    // so role-bound daily notes and the widget can use one consistent account.
+    private async Task<(string Aid, string Token)> ExchangeTokenByStokenAsync(string stoken, string mid, int dstTokenType, CancellationToken cancellation)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            dst_token_type = dstTokenType,
+            mid,
+            src_token = new { token_type = 1, token = stoken }
+        });
+        async Task<(string Aid, string Token)> ExchangeAsync(string clientType)
+        {
+            var headers = PassportHeaders(clientType);
+            headers["DS"] = SignPassport(body, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), RandomPassportNonce());
+            var data = await GetAsync(TokenExchangeEndpoint, "", new Credential(), cancellation,
+                requestBody: body, extraHeaders: headers, passportProfile: true, allowStokenRecovery: false, sendCookie: false);
+            var tokenObj = JsonValue.Object(data, "token");
+            var userObj = JsonValue.Object(data, "user_info");
+            return (JsonValue.String(userObj, "aid"), JsonValue.String(tokenObj, "token"));
+        }
+        try
+        {
+            return await ExchangeAsync("2");
+        }
+        catch (ApiFailure error) when (error.Kind == FailureKind.Protocol && !cancellation.IsCancellationRequested)
+        {
+            return await ExchangeAsync("3");
+        }
+    }
+
+    // The app QR may return only stoken. Exchange it via passport ma-cn-session/app/exchange
+    // so role-bound daily notes and the widget stay on one consistent account.
+    public async Task<bool> RefreshCookieTokenByStokenAsync(Credential credential, CancellationToken cancellation = default, bool force = false)
+    {
+        var initialFields = Cookies.Parse(credential.Cookie);
+        if (!force && (initialFields.ContainsKey("cookie_token_v2") || initialFields.ContainsKey("cookie_token"))) return false;
+        var stoken = initialFields.GetValueOrDefault("stoken") ?? initialFields.GetValueOrDefault("stoken_v2");
+        var mid = initialFields.GetValueOrDefault("mid") ?? initialFields.GetValueOrDefault("account_mid_v2") ?? initialFields.GetValueOrDefault("ltmid_v2");
+        if (string.IsNullOrEmpty(stoken) || string.IsNullOrEmpty(mid)) return false;
+        var initialCookieTokenV2 = initialFields.GetValueOrDefault("cookie_token_v2");
+        var expectedId = initialFields.GetValueOrDefault("stuid") ?? initialFields.GetValueOrDefault("stuid_v2") ??
+            initialFields.GetValueOrDefault("account_id") ?? initialFields.GetValueOrDefault("account_id_v2");
+        var (id, cookie) = await ExchangeTokenByStokenAsync(stoken, mid, 4, cancellation);
+        if (id != expectedId || string.IsNullOrEmpty(cookie))
+            throw new ApiFailure(FailureKind.Protocol, "登录账号校验不一致，请重新扫码。", AccountMismatchCode);
+        string? ltoken = null;
+        var currentFields = Cookies.Parse(credential.Cookie);
+        if (!currentFields.ContainsKey("ltoken") && !currentFields.ContainsKey("ltoken_v2"))
+        {
+            try
+            {
+                var (ltokenAid, parsed) = await ExchangeTokenByStokenAsync(stoken, mid, 2, cancellation);
+                if (ltokenAid == expectedId && !string.IsNullOrEmpty(parsed)) ltoken = parsed;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+            catch { /* Best-effort ltoken enrichment; never blocks cookie_token refresh. */ }
+        }
+        cancellation.ThrowIfCancellationRequested();
+        // Re-parse after awaits so concurrent browser rotation on unrelated tokens is never overwritten.
+        var latestFields = Cookies.Parse(credential.Cookie);
+        var before = credential.Cookie;
+        latestFields["cookie_token"] = cookie;
+        latestFields["account_id"] = id;
+        if (force && !string.IsNullOrEmpty(initialCookieTokenV2) &&
+            string.Equals(latestFields.GetValueOrDefault("cookie_token_v2"), initialCookieTokenV2, StringComparison.Ordinal))
+            latestFields.Remove("cookie_token_v2");
+        if (!string.IsNullOrEmpty(ltoken) && !latestFields.ContainsKey("ltoken") && !latestFields.ContainsKey("ltoken_v2"))
+        {
+            latestFields["ltoken"] = ltoken;
+            latestFields["ltuid"] = id;
+        }
+        try
+        {
+            credential.Cookie = Cookies.Create(JsonSerializer.Serialize(latestFields)).Cookie;
+            return !string.Equals(before, credential.Cookie, StringComparison.Ordinal);
+        }
+        catch (ArgumentException)
+        {
+            throw new ApiFailure(FailureKind.Protocol, "登录凭据格式不正确，请重新扫码。");
+        }
+    }
+
     public async Task<Credential> CompleteQrCredentialAsync(Credential credential, CancellationToken cancellation = default)
     {
         var fields = Cookies.Parse(credential.Cookie);
         if (fields.ContainsKey("cookie_token_v2") || fields.ContainsKey("cookie_token")) return credential;
-        if (!fields.TryGetValue("stoken", out var stoken)) throw new ArgumentException("缺少小组件凭据。");
-        var data = await GetAsync(CookieExchangeEndpoint, Query(new Dictionary<string, string> { ["stoken"] = stoken }),
-            credential, cancellation, extraHeaders: PassportHeaders("2"));
-        var id = JsonValue.String(data, "uid");
-        var cookie = JsonValue.String(data, "cookie_token");
-        if (id != fields.GetValueOrDefault("stuid") || string.IsNullOrEmpty(cookie))
-            throw new ApiFailure(FailureKind.Protocol, "登录账号校验不一致，请重新扫码。");
-        fields["cookie_token"] = cookie; fields["account_id"] = id;
-        try { return Cookies.Create(JsonSerializer.Serialize(fields)); }
-        catch (ArgumentException) { throw new ApiFailure(FailureKind.Protocol, "登录凭据格式不正确，请重新扫码。"); }
+        var hasStoken = fields.ContainsKey("stoken") || fields.ContainsKey("stoken_v2");
+        var hasMid = !string.IsNullOrEmpty(fields.GetValueOrDefault("mid")) ||
+            !string.IsNullOrEmpty(fields.GetValueOrDefault("account_mid_v2")) ||
+            !string.IsNullOrEmpty(fields.GetValueOrDefault("ltmid_v2"));
+        if (!hasStoken || !hasMid) throw new ArgumentException("缺少小组件凭据。");
+        try
+        {
+            await RefreshCookieTokenByStokenAsync(credential, cancellation, force: false);
+        }
+        catch (ApiFailure error) when (error.Code != AccountMismatchCode)
+        {
+            // Keep stoken + mid when passport exchange refuses conversion; getUserGameRolesByStoken
+            // and the Android widget endpoint work directly with stoken + mid.
+        }
+        return credential;
     }
 }

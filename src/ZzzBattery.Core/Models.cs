@@ -86,6 +86,15 @@ public sealed class WidgetSettings
     public double? Top { get; set; }
     public WindowPlacement? Placement { get; set; }
     public string DeviceId { get; set; } = Guid.NewGuid().ToString();
+    public string AndroidDeviceFp { get; set; } = "";
+    public string WebDeviceFp { get; set; } = "";
+    public DateTimeOffset? AndroidDeviceFpUpdatedAt { get; set; }
+    public DateTimeOffset? WebDeviceFpUpdatedAt { get; set; }
+    public bool MiyoQianEnabled { get; set; } = true;
+    public bool MiyoQianAutoStart { get; set; } = true;
+    public bool MiyoQianSyncWithDailySign { get; set; } = true;
+    public bool MiyoQianHideBar { get; set; }
+    public string MiyoQianPath { get; set; } = "";
 }
 
 public sealed record ReminderState

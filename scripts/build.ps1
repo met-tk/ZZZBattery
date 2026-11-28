@@ -1,4 +1,4 @@
-param([switch]$SkipTests, [ValidatePattern('^[A-Za-z0-9._-]+$')][string]$PackageName = 'ZZZBattery')
+﻿param([switch]$SkipTests, [ValidatePattern('^[A-Za-z0-9._-]+$')][string]$PackageName = 'ZZZBattery')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $configPath = Join-Path $projectRoot 'NuGet.Config'
@@ -9,9 +9,40 @@ try {
         & dotnet test 'tests\ZzzBattery.Tests\ZzzBattery.Tests.csproj' -c Release "-p:RestoreConfigFile=$configPath" -p:NuGetAudit=false
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     }
+    if (Test-Path -LiteralPath $outputPath) {
+        Remove-Item -LiteralPath $outputPath -Recurse -Force
+    }
     & dotnet publish 'src\ZzzBattery.Windows\ZzzBattery.Windows.csproj' -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:DebugSymbols=false "-p:RestoreConfigFile=$configPath" -p:NuGetAudit=false -o $outputPath
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $outputPath '使用说明.md')
+    $miyoSrc = Join-Path $projectRoot 'MiyoQian'
+    if (Test-Path -LiteralPath (Join-Path $miyoSrc 'main.py')) {
+        $miyoDst = Join-Path $outputPath 'MiyoQian'
+        if (Test-Path -LiteralPath $miyoDst) { Remove-Item -LiteralPath $miyoDst -Recurse -Force }
+        $excludedDirs = [System.Collections.Generic.HashSet[string]]::new(
+            [string[]]@('.venv', 'venv', '__pycache__', 'data', 'logs', 'tests', '.git', '.github', '.idea', '.pytest_cache', '.ruff_cache', 'docker'),
+            [System.StringComparer]::OrdinalIgnoreCase
+        )
+        $excludedFiles = [System.Collections.Generic.HashSet[string]]::new(
+            [string[]]@('config.yaml', 'qrcode.png', '.env', '.dockerignore', 'credentials.yaml', 'credentials.json'),
+            [System.StringComparer]::OrdinalIgnoreCase
+        )
+        $copyMiyoTree = {
+            param([string]$SrcDir, [string]$DstDir)
+            New-Item -ItemType Directory -Path $DstDir -Force | Out-Null
+            foreach ($entry in Get-ChildItem -LiteralPath $SrcDir -Force) {
+                if ($entry.PSIsContainer) {
+                    if ($excludedDirs.Contains($entry.Name)) { continue }
+                    & $copyMiyoTree -SrcDir $entry.FullName -DstDir (Join-Path $DstDir $entry.Name)
+                } else {
+                    if ($excludedFiles.Contains($entry.Name)) { continue }
+                    if ($entry.Name -like '.env.*' -or $entry.Extension -in '.log', '.pyc', '.pyo', '.pyd', '.dpapi') { continue }
+                    Copy-Item -LiteralPath $entry.FullName -Destination (Join-Path $DstDir $entry.Name) -Force
+                }
+            }
+        }
+        & $copyMiyoTree -SrcDir $miyoSrc -DstDir $miyoDst
+    }
     $licensePath = Join-Path $outputPath 'licenses'
     New-Item -ItemType Directory -Path $licensePath -Force | Out-Null
     $runtime = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.packages\microsoft.netcore.app.runtime.win-x64') -Directory |
